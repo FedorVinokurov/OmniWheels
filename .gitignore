@@ -1,0 +1,70 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.aar
+
+# Files for the Dalvik VM
+*.dex
+
+# Java/Kotlin compiled files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+
+# Gradle files
+.gradle/
+**/build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log files
+*.log
+
+# Android Studio
+.idea/
+*.iml
+
+# Keystore files (ВАЖНО — не коммить!)
+*.jks
+*.keystore
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# Google Services (если используешь Firebase — иногда НЕ игнорируют)
+google-services.json
+
+# Navigation Safe Args
+.navigation/
+
+# Kotlin
+*.kotlin_module
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+
+# Captures (скриншоты/видео)
+captures/
+
+# IntelliJ
+*.ipr
+*.iws
+
+# NDK
+obj/
+
+# Gradle wrapper (НЕ игнорируем!)
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties

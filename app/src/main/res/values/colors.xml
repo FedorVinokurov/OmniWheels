@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="screen_background">#F5F7FA</color>
+    <color name="control_stroke">#94A3B8</color>
+    <color name="text_primary">#111827</color>
+    <color name="text_secondary">#475569</color>
+    <color name="status_connected">#15803D</color>
+    <color name="status_disconnected">#B91C1C</color>
+    <color name="stop_button">#DC2626</color>
+    <color name="telemetry_background">#E2E8F0</color>
+</resources>

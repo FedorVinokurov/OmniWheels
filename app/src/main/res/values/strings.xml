@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">OmniWheels</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="refresh_devices">Refresh</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Off</string>
+    <string name="stop">Emergency stop</string>
+    <string name="no_devices">No paired Bluetooth devices</string>
+    <string name="unknown_device">Unknown</string>
+    <string name="status_ready">Choose a paired Arduino Bluetooth module.</string>
+    <string name="status_permission_required">Bluetooth permission is required.</string>
+    <string name="status_no_bluetooth">Bluetooth is not available on this device.</string>
+    <string name="status_pair_device">Pair HC-05, HC-06, or ESP32 in Android settings first.</string>
+    <string name="status_connecting">Connecting to %1$s...</string>
+    <string name="status_connected">Connected to %1$s. Commands are streaming.</string>
+    <string name="status_connection_failed">Connection failed: %1$s</string>
+    <string name="status_write_failed">Command was not sent. Check robot power and Bluetooth link.</string>
+    <string name="vector_value">X: %1$d%%  Y: %2$d%%</string>
+    <string name="rotation_value">Rotation: %1$d%%</string>
+    <string name="speed_value">Speed limit: %1$d PWM</string>
+    <string name="command_placeholder">M 0 0 0 0</string>
+    <string name="motor_front_left">FL: %1$d</string>
+    <string name="motor_front_right">FR: %1$d</string>
+    <string name="motor_rear_left">RL: %1$d</string>
+    <string name="motor_rear_right">RR: %1$d</string>
+</resources>

@@ -27,7 +27,7 @@ class OmniJoystickView @JvmOverloads constructor(
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 6f
+        strokeWidth = 3f
         color = Color.WHITE
     }
     private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -55,7 +55,7 @@ class OmniJoystickView @JvmOverloads constructor(
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val radius = min(width, height) * 0.42f
+        val radius = min(width, height) * 0.28f
         val knobRadius = radius * 0.38f
 
         canvas.drawCircle(cx, cy, radius, basePaint)

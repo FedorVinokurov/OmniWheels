@@ -8,6 +8,15 @@
     android:padding="16dp"
     tools:context=".FirstFragment">
 
+    <TextureView
+        android:id="@+id/camera_preview"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <com.example.omniwheels.OmniJoystickView
         android:id="@+id/drive_joystick"
         android:layout_width="128dp"

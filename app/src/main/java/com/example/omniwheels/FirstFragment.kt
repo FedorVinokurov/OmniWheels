@@ -1,10 +1,17 @@
 package com.example.omniwheels
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
@@ -12,6 +19,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
+import android.view.Surface
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
@@ -29,8 +38,13 @@ class FirstFragment : Fragment() {
     private val usbManager: UsbManager by lazy {
         requireContext().getSystemService(Context.USB_SERVICE) as UsbManager
     }
+    private val cameraManager: CameraManager by lazy {
+        requireContext().getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
     private var serialConnection: UsbSerialConnection? = null
+    private var cameraDevice: CameraDevice? = null
+    private var cameraSession: CameraCaptureSession? = null
     private var permissionReceiverRegistered = false
 
     private var joyX = 0f
@@ -80,14 +94,118 @@ class FirstFragment : Fragment() {
             sendDriveCommand()
         }
 
+        binding.cameraPreview.surfaceTextureListener = cameraSurfaceListener
+        startCameraIfReady()
         connectFirstUsbDevice()
     }
 
     override fun onDestroyView() {
+        closeCamera()
         disconnect()
         unregisterUsbPermissionReceiver()
         super.onDestroyView()
         _binding = null
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CAMERA_PERMISSION_REQUEST &&
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        ) {
+            startCameraIfReady()
+        }
+    }
+
+    private val cameraSurfaceListener = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+            startCameraIfReady()
+        }
+
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
+
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+            closeCamera()
+            return true
+        }
+
+        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+    }
+
+    private fun startCameraIfReady() {
+        if (_binding == null || cameraDevice != null || !binding.cameraPreview.isAvailable) return
+
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+            return
+        }
+
+        try {
+            val cameraId = findBackCameraId() ?: return
+            cameraManager.openCamera(cameraId, cameraStateCallback, mainHandler)
+        } catch (_: SecurityException) {
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun findBackCameraId(): String? {
+        val cameraIds = cameraManager.cameraIdList
+        return cameraIds.firstOrNull { id ->
+            cameraManager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        } ?: cameraIds.firstOrNull()
+    }
+
+    private val cameraStateCallback = object : CameraDevice.StateCallback() {
+        override fun onOpened(camera: CameraDevice) {
+            cameraDevice = camera
+            startPreview(camera)
+        }
+
+        override fun onDisconnected(camera: CameraDevice) {
+            closeCamera()
+        }
+
+        override fun onError(camera: CameraDevice, error: Int) {
+            closeCamera()
+        }
+    }
+
+    private fun startPreview(camera: CameraDevice) {
+        val texture = binding.cameraPreview.surfaceTexture ?: return
+        texture.setDefaultBufferSize(binding.cameraPreview.width, binding.cameraPreview.height)
+        val surface = Surface(texture)
+        val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            addTarget(surface)
+        }
+
+        camera.createCaptureSession(
+            listOf(surface),
+            object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    cameraSession = session
+                    session.setRepeatingRequest(request.build(), null, mainHandler)
+                }
+
+                override fun onConfigureFailed(session: CameraCaptureSession) = Unit
+            },
+            mainHandler
+        )
+    }
+
+    private fun closeCamera() {
+        try {
+            cameraSession?.close()
+            cameraDevice?.close()
+        } finally {
+            cameraSession = null
+            cameraDevice = null
+        }
     }
 
     private fun registerUsbPermissionReceiver() {
@@ -230,6 +348,7 @@ class FirstFragment : Fragment() {
 
     companion object {
         private const val ACTION_USB_PERMISSION = "com.example.omniwheels.USB_PERMISSION"
+        private const val CAMERA_PERMISSION_REQUEST = 7
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
     }

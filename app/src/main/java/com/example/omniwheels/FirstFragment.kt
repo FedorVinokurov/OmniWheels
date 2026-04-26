@@ -1,12 +1,16 @@
 package com.example.omniwheels
 
-import android.Manifest
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothSocket
-import android.content.pm.PackageManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -15,7 +19,6 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.omniwheels.databinding.FragmentFirstBinding
 import java.io.IOException
-import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
@@ -24,18 +27,42 @@ class FirstFragment : Fragment() {
     private var _binding: FragmentFirstBinding? = null
     private val binding get() = _binding!!
 
-    private val bluetoothAdapter: BluetoothAdapter? by lazy { BluetoothAdapter.getDefaultAdapter() }
-    private val sppUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-    private val devices = mutableListOf<BluetoothDevice>()
-    private var socket: BluetoothSocket? = null
+    private val usbManager: UsbManager by lazy {
+        requireContext().getSystemService(Context.USB_SERVICE) as UsbManager
+    }
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val devices = mutableListOf<UsbDevice>()
+    private var serialConnection: UsbSerialConnection? = null
+    private var permissionReceiverRegistered = false
+
     private var joyX = 0f
     private var joyY = 0f
     private var rotation = 0f
     private var speedLimit = 180
     private var lastCommand = ""
 
+    private val usbPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != ACTION_USB_PERMISSION) return
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            if (device != null && granted) {
+                openDevice(device)
+            } else {
+                setBusy(false)
+                setStatus(getString(R.string.status_usb_permission_denied))
+            }
+        }
+    }
+
     override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?,
+        inflater: LayoutInflater,
+        container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentFirstBinding.inflate(inflater, container, false)
@@ -44,6 +71,8 @@ class FirstFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        registerUsbPermissionReceiver()
 
         binding.joystick.listener = { x, y ->
             joyX = x
@@ -72,54 +101,50 @@ class FirstFragment : Fragment() {
             if (fromUser) sendDriveCommand()
         }
 
-        binding.refreshDevicesButton.setOnClickListener { loadBondedDevices() }
+        binding.refreshDevicesButton.setOnClickListener { loadUsbDevices() }
         binding.connectButton.setOnClickListener { connectSelectedDevice() }
         binding.stopButton.setOnClickListener { stopRobot() }
         binding.disconnectButton.setOnClickListener { disconnect() }
 
-        ensureBluetoothPermission()
-        loadBondedDevices()
+        loadUsbDevices()
         updateTelemetry(0, 0, 0, 0)
     }
 
     override fun onDestroyView() {
         disconnect()
+        unregisterUsbPermissionReceiver()
         super.onDestroyView()
         _binding = null
     }
 
-    private fun ensureBluetoothPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), BLUETOOTH_PERMISSION_REQUEST)
-        }
+    private fun registerUsbPermissionReceiver() {
+        if (permissionReceiverRegistered) return
+        ContextCompat.registerReceiver(
+            requireContext(),
+            usbPermissionReceiver,
+            IntentFilter(ACTION_USB_PERMISSION),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        permissionReceiverRegistered = true
     }
 
-    private fun hasBluetoothPermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    private fun unregisterUsbPermissionReceiver() {
+        if (!permissionReceiverRegistered) return
+        requireContext().unregisterReceiver(usbPermissionReceiver)
+        permissionReceiverRegistered = false
     }
 
-    private fun loadBondedDevices() {
-        if (!hasBluetoothPermission()) {
-            setStatus(getString(R.string.status_permission_required))
-            return
-        }
-
-        val adapter = bluetoothAdapter
-        if (adapter == null) {
-            setStatus(getString(R.string.status_no_bluetooth))
-            return
-        }
-
+    private fun loadUsbDevices() {
         devices.clear()
-        devices.addAll(adapter.bondedDevices.sortedBy { it.name ?: it.address })
+        devices.addAll(usbManager.deviceList.values.sortedWith(compareBy({ it.vendorId }, { it.productId })))
 
         val labels = if (devices.isEmpty()) {
-            listOf(getString(R.string.no_devices))
+            listOf(getString(R.string.no_usb_devices))
         } else {
-            devices.map { device -> "${device.name ?: getString(R.string.unknown_device)} (${device.address})" }
+            devices.map { device ->
+                val name = device.productName ?: getString(R.string.usb_device)
+                "$name (${device.vendorId.toString(16)}:${device.productId.toString(16)})"
+            }
         }
         binding.deviceSpinner.adapter = ArrayAdapter(
             requireContext(),
@@ -128,48 +153,67 @@ class FirstFragment : Fragment() {
         )
 
         setStatus(
-            if (devices.isEmpty()) getString(R.string.status_pair_device)
-            else getString(R.string.status_ready)
+            if (devices.isEmpty()) getString(R.string.status_connect_usb)
+            else getString(R.string.status_usb_ready)
         )
     }
 
     private fun connectSelectedDevice() {
-        if (!hasBluetoothPermission()) {
-            ensureBluetoothPermission()
-            return
-        }
         if (devices.isEmpty()) {
-            setStatus(getString(R.string.status_pair_device))
+            setStatus(getString(R.string.status_connect_usb))
             return
         }
 
         val selected = devices[binding.deviceSpinner.selectedItemPosition.coerceAtLeast(0)]
         setBusy(true)
-        setStatus(getString(R.string.status_connecting, selected.name ?: selected.address))
+        setStatus(getString(R.string.status_usb_permission))
 
-        thread(name = "ArduinoBluetoothConnect") {
+        if (usbManager.hasPermission(selected)) {
+            openDevice(selected)
+        } else {
             try {
-                bluetoothAdapter?.cancelDiscovery()
-                val newSocket = selected.createRfcommSocketToServiceRecord(sppUuid)
-                newSocket.connect()
-                socket = newSocket
+                usbManager.requestPermission(selected, usbPermissionIntent())
+            } catch (error: RuntimeException) {
+                setBusy(false)
+                setStatus(getString(R.string.status_usb_failed, error.localizedMessage ?: "permission request"))
+            }
+        }
+    }
+
+    private fun usbPermissionIntent(): PendingIntent {
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_MUTABLE
+        } else {
+            0
+        }
+        return PendingIntent.getBroadcast(
+            requireContext(),
+            0,
+            Intent(ACTION_USB_PERMISSION).setPackage(requireContext().packageName),
+            flags
+        )
+    }
+
+    private fun openDevice(device: UsbDevice) {
+        setBusy(true)
+        setStatus(getString(R.string.status_usb_opening, device.productName ?: getString(R.string.usb_device)))
+
+        thread(name = "ArduinoUsbConnect") {
+            try {
+                val connection = UsbSerialConnectionFactory.open(usbManager, device, BAUD_RATE)
+                serialConnection = connection
                 requireActivity().runOnUiThread {
                     setBusy(false)
                     setConnected(true)
-                    setStatus(getString(R.string.status_connected, selected.name ?: selected.address))
+                    setStatus(getString(R.string.status_usb_connected, device.productName ?: getString(R.string.usb_device)))
                     sendDriveCommand()
                 }
-            } catch (error: IOException) {
-                disconnect()
+            } catch (error: Exception) {
+                closeSerialConnection()
                 requireActivity().runOnUiThread {
                     setBusy(false)
                     setConnected(false)
-                    setStatus(getString(R.string.status_connection_failed, error.localizedMessage ?: "I/O"))
-                }
-            } catch (error: SecurityException) {
-                requireActivity().runOnUiThread {
-                    setBusy(false)
-                    setStatus(getString(R.string.status_permission_required))
+                    setStatus(getString(R.string.status_usb_failed, error.localizedMessage ?: "USB"))
                 }
             }
         }
@@ -212,13 +256,13 @@ class FirstFragment : Fragment() {
         lastCommand = command
         binding.commandPreview.text = command.trim()
 
-        val activeSocket = socket ?: return
-        thread(name = "ArduinoBluetoothWrite") {
+        val connection = serialConnection ?: return
+        thread(name = "ArduinoUsbWrite") {
             try {
-                activeSocket.outputStream.write(command.toByteArray(Charsets.US_ASCII))
-                activeSocket.outputStream.flush()
+                connection.write(command.toByteArray(Charsets.US_ASCII))
             } catch (error: IOException) {
-                requireActivity().runOnUiThread {
+                mainHandler.post {
+                    closeSerialConnection()
                     setConnected(false)
                     setStatus(getString(R.string.status_write_failed))
                 }
@@ -239,14 +283,24 @@ class FirstFragment : Fragment() {
     }
 
     private fun disconnect() {
+        closeSerialConnection()
+        if (_binding != null) {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                setConnected(false)
+            } else {
+                mainHandler.post {
+                    if (_binding != null) setConnected(false)
+                }
+            }
+        }
+    }
+
+    private fun closeSerialConnection() {
         try {
-            socket?.close()
+            serialConnection?.close()
         } catch (_: IOException) {
         } finally {
-            socket = null
-        }
-        if (_binding != null) {
-            setConnected(false)
+            serialConnection = null
         }
     }
 
@@ -275,6 +329,7 @@ class FirstFragment : Fragment() {
     }
 
     companion object {
-        private const val BLUETOOTH_PERMISSION_REQUEST = 42
+        private const val ACTION_USB_PERMISSION = "com.example.omniwheels.USB_PERMISSION"
+        private const val BAUD_RATE = 115200
     }
 }

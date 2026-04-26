@@ -108,7 +108,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="@string/rotation_value"
+            android:text="@string/rotation_zero"
             android:textColor="@color/text_primary"
             android:textStyle="bold"
             tools:text="Rotation: 0%" />
@@ -127,7 +127,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/speed_value"
+            android:text="@string/speed_default"
             android:textColor="@color/text_primary"
             android:textStyle="bold"
             tools:text="Speed limit: 180 PWM" />

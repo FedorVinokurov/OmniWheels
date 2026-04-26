@@ -57,8 +57,7 @@ void handleCommand(String command) {
 }
 
 void setMotor(AF_DCMotor &motor, int speed) {
-  int pwm = abs(speed);
-  motor.setSpeed(pwm);
+  motor.setSpeed(abs(speed));
   if (speed > 0) {
     motor.run(FORWARD);
   } else if (speed < 0) {

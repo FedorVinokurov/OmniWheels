@@ -4,8 +4,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.RadialGradient
-import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -25,21 +23,21 @@ class OmniJoystickView @JvmOverloads constructor(
 
     private val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.rgb(30, 41, 59)
+        color = Color.TRANSPARENT
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 4f
-        color = Color.rgb(148, 163, 184)
+        strokeWidth = 6f
+        color = Color.WHITE
     }
     private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 3f
-        color = Color.argb(130, 226, 232, 240)
+        strokeWidth = 4f
+        color = Color.argb(180, 255, 255, 255)
     }
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.rgb(34, 197, 94)
+        color = Color.WHITE
     }
 
     private var knobX = 0f
@@ -58,27 +56,17 @@ class OmniJoystickView @JvmOverloads constructor(
         val cx = width / 2f
         val cy = height / 2f
         val radius = min(width, height) * 0.42f
-        val knobRadius = radius * 0.28f
+        val knobRadius = radius * 0.38f
 
-        basePaint.shader = RadialGradient(
-            cx,
-            cy,
-            radius,
-            intArrayOf(Color.rgb(51, 65, 85), Color.rgb(15, 23, 42)),
-            null,
-            Shader.TileMode.CLAMP
-        )
         canvas.drawCircle(cx, cy, radius, basePaint)
-        basePaint.shader = null
 
-        canvas.drawCircle(cx, cy, radius * 0.66f, ringPaint)
         canvas.drawCircle(cx, cy, radius, ringPaint)
-        canvas.drawLine(cx - radius, cy, cx + radius, cy, axisPaint)
-        canvas.drawLine(cx, cy - radius, cx, cy + radius, axisPaint)
 
         val hx = cx + knobX * radius
         val hy = cy - knobY * radius
-        canvas.drawLine(cx, cy, hx, hy, axisPaint)
+        if (knobX != 0f || knobY != 0f) {
+            canvas.drawLine(cx, cy, hx, hy, axisPaint)
+        }
         canvas.drawCircle(hx, hy, knobRadius, handlePaint)
     }
 

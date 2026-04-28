@@ -18,6 +18,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -39,6 +43,9 @@ android {
 }
 
 dependencies {
+    implementation("io.agora.rtc:full-rtc-basic:4.5.0") {
+        exclude(group = "io.agora.infra", module = "aosl")
+    }
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

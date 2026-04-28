@@ -26,6 +26,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.view.SurfaceView
 import android.view.LayoutInflater
 import android.view.Surface
 import android.view.TextureView
@@ -35,6 +37,13 @@ import androidx.fragment.app.Fragment
 import androidx.core.content.ContextCompat
 import androidx.constraintlayout.widget.ConstraintLayout
 import com.example.omniwheels.databinding.FragmentFirstBinding
+import io.agora.rtc2.ChannelMediaOptions
+import io.agora.rtc2.Constants
+import io.agora.rtc2.DataStreamConfig
+import io.agora.rtc2.IRtcEngineEventHandler
+import io.agora.rtc2.RtcEngine
+import io.agora.rtc2.video.VideoCanvas
+import io.agora.rtc2.video.VideoEncoderConfiguration
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.IOException
@@ -62,6 +71,11 @@ private const val STREAM_PORT = 8080
 private const val STREAM_PATH = "/stream.mjpg"
 private const val COMMAND_PORT = 4210
 private const val DISCOVERY_PORT = 4211
+private const val AGORA_CHANNEL = "robot-room"
+private const val AGORA_APP_ID = "c66217ea1f454764a7d81538ca9cfa24"
+private const val AGORA_TOKEN =
+    "007eJxTYOjgFwsze3jkYNK0uw88QhkPpk2QmtwYUec3Y/mO+/XmGzYqMCSbmRkZmqcmGqaZmJqYm5kkmqdYGJoaWyQnWianJRqZ3E/4kNkQyMiwOUOXgREKQXwuhqL8pPwS3aL8/FwGBgAnXSJh"
+private const val LOG_TAG = "OmniAgora"
 
 class FirstFragment : Fragment() {
 
@@ -88,6 +102,9 @@ class FirstFragment : Fragment() {
     private var commandSender: UdpCommandSender? = null
     private var mjpegView: MjpegView? = null
     private var cameraHost: String? = null
+    private var rtcEngine: RtcEngine? = null
+    private var commandStreamId: Int? = null
+    private var agoraSurfaceView: SurfaceView? = null
     private var permissionReceiverRegistered = false
 
     @Volatile
@@ -163,6 +180,50 @@ class FirstFragment : Fragment() {
         }
     }
 
+    private val rtcEventHandler = object : IRtcEngineEventHandler() {
+        override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
+            Log.d(LOG_TAG, "joined channel=$channel uid=$uid controllerMode=$controllerMode")
+            commandStreamId = rtcEngine?.createDataStream(
+                DataStreamConfig().apply {
+                    ordered = true
+                    syncWithAudio = false
+                }
+            )?.takeIf { it >= 0 }
+        }
+
+        override fun onUserJoined(uid: Int, elapsed: Int) {
+            Log.d(LOG_TAG, "peer joined uid=$uid controllerMode=$controllerMode")
+            if (controllerMode) {
+                mainHandler.post { setupAgoraRemoteVideo(uid) }
+            }
+        }
+
+        override fun onUserOffline(uid: Int, reason: Int) {
+            Log.d(LOG_TAG, "peer offline uid=$uid reason=$reason")
+            if (controllerMode) {
+                mainHandler.post { clearAgoraVideo() }
+            }
+        }
+
+        override fun onRemoteVideoStateChanged(uid: Int, state: Int, reason: Int, elapsed: Int) {
+            Log.d(LOG_TAG, "remote video uid=$uid state=$state reason=$reason controllerMode=$controllerMode")
+            if (controllerMode) {
+                mainHandler.post { setupAgoraRemoteVideo(uid) }
+            }
+        }
+
+        override fun onStreamMessage(uid: Int, streamId: Int, data: ByteArray?) {
+            val command = data?.decodeToString().orEmpty()
+            if (!controllerMode && command.isNotBlank()) {
+                writeCommand(command, force = true)
+            }
+        }
+
+        override fun onError(err: Int) {
+            Log.e(LOG_TAG, "agora error=$err controllerMode=$controllerMode")
+        }
+    }
+
     override fun onDestroyView() {
         stopNetworking()
         closeCamera()
@@ -181,13 +242,13 @@ class FirstFragment : Fragment() {
         if (requestCode == CAMERA_PERMISSION_REQUEST &&
             grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         ) {
-            startCameraIfReady()
+            if (!controllerMode) joinAgora()
         }
     }
 
     private val cameraSurfaceListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-            if (!controllerMode) startCameraIfReady()
+            // Agora owns camera preview now; keep the legacy TextureView idle.
         }
 
         override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
@@ -228,35 +289,94 @@ class FirstFragment : Fragment() {
         binding.modeOverlay.visibility = View.GONE
         if (controllerMode) {
             binding.cameraPreview.visibility = View.GONE
-            mjpegView?.visibility = View.VISIBLE
+            binding.agoraVideoContainer.visibility = View.VISIBLE
+            mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
-            cameraDiscovery = UdpCameraDiscovery(DISCOVERY_PORT) { host ->
-                if (cameraHost == host) return@UdpCameraDiscovery
-                cameraHost = host
-                mjpegView?.play("http://$host:$STREAM_PORT$STREAM_PATH")
-                sendDriveCommand()
-            }.also { it.start() }
-            cameraScanner = CameraSubnetScanner { host ->
-                if (cameraHost == host) return@CameraSubnetScanner
-                cameraHost = host
-                mjpegView?.play("http://$host:$STREAM_PORT$STREAM_PATH")
-                sendDriveCommand()
-            }.also { it.start() }
-            commandSender = UdpCommandSender(COMMAND_PORT)
+            joinAgora()
         } else {
-            binding.cameraPreview.visibility = View.VISIBLE
+            binding.cameraPreview.visibility = View.GONE
+            binding.agoraVideoContainer.visibility = View.VISIBLE
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.GONE
             binding.turnJoystick.visibility = View.GONE
-            startCameraIfReady()
-            mjpegServer = MjpegServer(STREAM_PORT, latestFrame).also { it.start() }
-            commandServer = UdpCommandServer(COMMAND_PORT) { command ->
-                writeCommand(command, force = true)
-            }.also { it.start() }
-            cameraBeacon = UdpCameraBeacon(DISCOVERY_PORT).also { it.start() }
+            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+                return
+            }
+            joinAgora()
             connectFirstUsbDevice()
         }
+    }
+
+    private fun joinAgora() {
+        leaveAgora()
+        try {
+            rtcEngine = RtcEngine.create(requireContext().applicationContext, AGORA_APP_ID, rtcEventHandler).apply {
+                enableVideo()
+                disableAudio()
+                setVideoEncoderConfiguration(
+                    VideoEncoderConfiguration(
+                        VideoEncoderConfiguration.VideoDimensions(640, 360),
+                        VideoEncoderConfiguration.FRAME_RATE.FRAME_RATE_FPS_15,
+                        600,
+                        VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_ADAPTIVE
+                    )
+                )
+                setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
+                setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
+            }
+
+            if (controllerMode) {
+                clearAgoraVideo()
+            } else {
+                setupAgoraLocalVideo()
+                rtcEngine?.startPreview()
+            }
+
+            val options = ChannelMediaOptions().apply {
+                clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
+                channelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+                publishCameraTrack = !controllerMode
+                publishMicrophoneTrack = false
+                autoSubscribeVideo = true
+                autoSubscribeAudio = false
+            }
+            rtcEngine?.joinChannel(AGORA_TOKEN, AGORA_CHANNEL, 0, options)
+        } catch (error: Exception) {
+            Log.e(LOG_TAG, "failed to join agora", error)
+            leaveAgora()
+        }
+    }
+
+    private fun setupAgoraLocalVideo() {
+        clearAgoraVideo()
+        agoraSurfaceView = SurfaceView(requireContext())
+        binding.agoraVideoContainer.addView(agoraSurfaceView)
+        rtcEngine?.setupLocalVideo(VideoCanvas(agoraSurfaceView, VideoCanvas.RENDER_MODE_HIDDEN, 0))
+    }
+
+    private fun setupAgoraRemoteVideo(uid: Int) {
+        clearAgoraVideo()
+        agoraSurfaceView = SurfaceView(requireContext())
+        binding.agoraVideoContainer.addView(agoraSurfaceView)
+        rtcEngine?.setupRemoteVideo(VideoCanvas(agoraSurfaceView, VideoCanvas.RENDER_MODE_HIDDEN, uid))
+    }
+
+    private fun clearAgoraVideo() {
+        binding.agoraVideoContainer.removeAllViews()
+        agoraSurfaceView = null
+    }
+
+    private fun leaveAgora() {
+        rtcEngine?.stopPreview()
+        rtcEngine?.leaveChannel()
+        rtcEngine?.let { RtcEngine.destroy() }
+        rtcEngine = null
+        commandStreamId = null
+        if (_binding != null) clearAgoraVideo()
     }
 
     private fun findBackCameraId(): String? {
@@ -335,6 +455,7 @@ class FirstFragment : Fragment() {
     }
 
     private fun stopNetworking() {
+        leaveAgora()
         mjpegServer?.stop()
         mjpegServer = null
         commandServer?.stop()
@@ -457,7 +578,9 @@ class FirstFragment : Fragment() {
         )
         val command = "M ${shieldSpeeds[0]} ${shieldSpeeds[1]} ${shieldSpeeds[2]} ${shieldSpeeds[3]}\n"
         if (controllerMode) {
-            cameraHost?.let { host -> commandSender?.send(host, command) }
+            commandStreamId?.let { streamId ->
+                rtcEngine?.sendStreamMessage(streamId, command.toByteArray(Charsets.US_ASCII))
+            }
         } else {
             writeCommand(command)
         }

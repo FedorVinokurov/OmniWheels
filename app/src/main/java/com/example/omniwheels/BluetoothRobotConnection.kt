@@ -1,0 +1,240 @@
+package com.example.omniwheels
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
+import java.io.IOException
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+private val BLE_SERVICE_UUID: UUID =
+    UUID.fromString("0000FFE0-0000-1000-8000-00805F9B34FB")
+private val BLE_WRITE_UUID_PRIMARY: UUID =
+    UUID.fromString("0000FFE1-0000-1000-8000-00805F9B34FB")
+private val BLE_WRITE_UUID_FALLBACK: UUID =
+    UUID.fromString("0000FFE2-0000-1000-8000-00805F9B34FB")
+
+class BluetoothRobotConnection private constructor(
+    private val gatt: BluetoothGatt,
+    private val writeCharacteristics: List<BluetoothGattCharacteristic>,
+) : UsbSerialConnection {
+    private val writeLock = Object()
+    @Volatile private var pendingWriteLatch: CountDownLatch? = null
+    @Volatile private var pendingWriteError: IOException? = null
+
+    override fun write(bytes: ByteArray) {
+        synchronized(writeLock) {
+            val errors = mutableListOf<String>()
+            for (characteristic in writeCharacteristics) {
+                for (writeType in characteristic.supportedWriteTypes()) {
+                    pendingWriteError = null
+                    pendingWriteLatch = CountDownLatch(1)
+                    val startError = startWrite(characteristic, bytes, writeType)
+                    if (startError == null) {
+                        val completed = pendingWriteLatch?.await(2500, TimeUnit.MILLISECONDS) == true
+                        val error = pendingWriteError
+                        pendingWriteLatch = null
+                        if (completed && error == null) return
+                        if (!completed && writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) return
+                        errors += error?.message ?: "write timeout"
+                    } else {
+                        pendingWriteLatch = null
+                        errors += startError
+                    }
+                }
+            }
+            throw IOException(errors.joinToString(" | "))
+        }
+    }
+
+    override fun close() {
+        try {
+            gatt.disconnect()
+        } catch (_: SecurityException) {
+        }
+        gatt.close()
+    }
+
+    fun onCharacteristicWrite(status: Int) {
+        pendingWriteError = if (status == BluetoothGatt.GATT_SUCCESS) {
+            null
+        } else {
+            IOException("write status $status")
+        }
+        pendingWriteLatch?.countDown()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startWrite(
+        characteristic: BluetoothGattCharacteristic,
+        bytes: ByteArray,
+        writeType: Int,
+    ): String? {
+        characteristic.writeType = writeType
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val status = gatt.writeCharacteristic(characteristic, bytes, writeType)
+            if (status == BluetoothStatusCodes.SUCCESS) null else "write returned $status"
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.value = bytes
+            @Suppress("DEPRECATION")
+            if (gatt.writeCharacteristic(characteristic)) null else "write returned false"
+        }
+    }
+
+    companion object {
+        fun requiredPermissions(): Array<String> {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+            } else {
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+
+        fun hasPermissions(context: Context): Boolean {
+            return requiredPermissions().all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        fun openFirstPaired(context: Context): BluetoothRobotConnection {
+            if (!hasPermissions(context)) {
+                throw IOException("Bluetooth permission required")
+            }
+            val adapter = bluetoothAdapter(context)
+                ?: throw IOException("Bluetooth not supported")
+            if (!adapter.isEnabled) {
+                throw IOException("Bluetooth is disabled")
+            }
+            val device = adapter.bondedDevices
+                .sortedWith(
+                    compareByDescending<BluetoothDevice> { it.name?.isLikelyRobotModule() == true }
+                        .thenBy { it.name ?: "" }
+                )
+                .firstOrNull()
+                ?: throw IOException("No paired Bluetooth devices")
+            return open(context, device)
+        }
+
+        @SuppressLint("MissingPermission")
+        private fun open(context: Context, device: BluetoothDevice): BluetoothRobotConnection {
+            val latch = CountDownLatch(1)
+            var result: Result<BluetoothRobotConnection>? = null
+            var connection: BluetoothRobotConnection? = null
+
+            val callback = object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        result = Result.failure(IOException("GATT status $status"))
+                        latch.countDown()
+                        gatt.close()
+                        return
+                    }
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        gatt.discoverServices()
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        result = Result.failure(IOException("Bluetooth disconnected"))
+                        latch.countDown()
+                        gatt.close()
+                    }
+                }
+
+                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        result = Result.failure(IOException("Services status $status"))
+                        latch.countDown()
+                        gatt.close()
+                        return
+                    }
+                    val service = gatt.getService(BLE_SERVICE_UUID)
+                    if (service == null) {
+                        result = Result.failure(IOException("Service FFE0 not found"))
+                        latch.countDown()
+                        gatt.close()
+                        return
+                    }
+                    val writeCharacteristics = listOfNotNull(
+                        service.getCharacteristic(BLE_WRITE_UUID_PRIMARY),
+                        service.getCharacteristic(BLE_WRITE_UUID_FALLBACK),
+                    ).filter { it.canWrite() }
+                    if (writeCharacteristics.isEmpty()) {
+                        result = Result.failure(IOException("FFE1/FFE2 write not found"))
+                        latch.countDown()
+                        gatt.close()
+                        return
+                    }
+                    val opened = BluetoothRobotConnection(gatt, writeCharacteristics)
+                    connection = opened
+                    result = Result.success(opened)
+                    latch.countDown()
+                }
+
+                override fun onCharacteristicWrite(
+                    gatt: BluetoothGatt,
+                    characteristic: BluetoothGattCharacteristic,
+                    status: Int,
+                ) {
+                    connection?.onCharacteristicWrite(status)
+                }
+            }
+
+            val gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                device.connectGatt(context.applicationContext, false, callback, BluetoothDevice.TRANSPORT_LE)
+            } else {
+                device.connectGatt(context.applicationContext, false, callback)
+            } ?: throw IOException("connectGatt returned null")
+
+            if (!latch.await(15000, TimeUnit.MILLISECONDS)) {
+                gatt.close()
+                throw IOException("Bluetooth connect timeout")
+            }
+            return result?.getOrThrow() ?: throw IOException("Bluetooth connect failed")
+        }
+
+        private fun bluetoothAdapter(context: Context): BluetoothAdapter? {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                context.getSystemService(BluetoothManager::class.java)?.adapter
+            } else {
+                @Suppress("DEPRECATION")
+                BluetoothAdapter.getDefaultAdapter()
+            }
+        }
+
+        private fun String.isLikelyRobotModule(): Boolean {
+            val upper = uppercase()
+            return upper.contains("HM") ||
+                upper.contains("BT") ||
+                upper.contains("BLE") ||
+                upper.contains("HC")
+        }
+
+        private fun BluetoothGattCharacteristic.canWrite(): Boolean {
+            return properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0 ||
+                properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+        }
+
+        private fun BluetoothGattCharacteristic.supportedWriteTypes(): List<Int> {
+            val result = mutableListOf<Int>()
+            if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
+                result += BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            }
+            if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
+                result += BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            }
+            return result.ifEmpty { listOf(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) }.distinct()
+        }
+    }
+}

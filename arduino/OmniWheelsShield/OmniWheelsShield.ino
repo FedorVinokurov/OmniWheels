@@ -1,4 +1,12 @@
 #include <AFMotor.h>
+#include <SoftwareSerial.h>
+
+// Bluetooth wiring for Arduino Uno:
+//   Bluetooth TXD -> Arduino D2
+//   Bluetooth RXD -> Arduino D10 through a 5V-to-3.3V divider
+//   Bluetooth VCC -> 5V
+//   Bluetooth GND -> GND
+SoftwareSerial bluetooth(2, 10); // RX, TX
 
 AF_DCMotor frontLeft(1);
 AF_DCMotor frontRight(2);
@@ -9,12 +17,18 @@ String input;
 
 void setup() {
   Serial.begin(115200);
+  bluetooth.begin(9600);
   stopAll();
 }
 
 void loop() {
-  while (Serial.available() > 0) {
-    char c = Serial.read();
+  readCommands(Serial);
+  readCommands(bluetooth);
+}
+
+void readCommands(Stream &stream) {
+  while (stream.available() > 0) {
+    char c = stream.read();
     if (c == '\n') {
       handleCommand(input);
       input = "";

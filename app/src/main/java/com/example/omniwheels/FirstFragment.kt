@@ -113,6 +113,9 @@ class FirstFragment : Fragment() {
     private var rotation = 0f
     private var speedLimit = 255
     private var lastCommand = ""
+    private var commandRxStatus = "CMD RX: нет"
+    private var commandTxStatus = "TX: нет"
+    private var connectionStatus = "BT: нет"
 
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -171,6 +174,8 @@ class FirstFragment : Fragment() {
         binding.cameraPreview.visibility = View.GONE
         binding.driveJoystick.visibility = View.GONE
         binding.turnJoystick.visibility = View.GONE
+        binding.commandStatus.visibility = View.GONE
+        updateCommandStatus()
         binding.modeCamera.setOnClickListener {
             configureRole(controller = false)
         }
@@ -214,6 +219,8 @@ class FirstFragment : Fragment() {
         override fun onStreamMessage(uid: Int, streamId: Int, data: ByteArray?) {
             val command = data?.decodeToString().orEmpty()
             if (!controllerMode && command.isNotBlank()) {
+                commandRxStatus = "CMD RX: ${command.trim()}"
+                updateCommandStatus()
                 writeCommand(command, force = true)
             }
         }
@@ -239,9 +246,18 @@ class FirstFragment : Fragment() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_PERMISSION_REQUEST &&
-            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
         ) {
-            if (!controllerMode) joinAgora()
+            if (!controllerMode) {
+                joinAgora()
+                connectBluetoothDevice()
+            }
+        }
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST &&
+            BluetoothRobotConnection.hasPermissions(requireContext())
+        ) {
+            connectBluetoothDevice()
         }
     }
 
@@ -283,6 +299,10 @@ class FirstFragment : Fragment() {
         closeCamera()
         disconnect()
         lastCommand = ""
+        commandRxStatus = "CMD RX: нет"
+        commandTxStatus = "TX: нет"
+        connectionStatus = "BT: нет"
+        updateCommandStatus()
         cameraHost = null
         controllerMode = controller
         binding.modeOverlay.visibility = View.GONE
@@ -292,6 +312,7 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
+            binding.commandStatus.visibility = View.GONE
             joinAgora()
         } else {
             binding.cameraPreview.visibility = View.GONE
@@ -299,14 +320,20 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.GONE
             binding.turnJoystick.visibility = View.GONE
-            if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+            binding.commandStatus.visibility = View.VISIBLE
+            updateCommandStatus()
+            val missingPermissions = listOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO
+            ).filter {
+                ContextCompat.checkSelfPermission(requireContext(), it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missingPermissions.isNotEmpty()) {
+                requestPermissions(missingPermissions.toTypedArray(), CAMERA_PERMISSION_REQUEST)
                 return
             }
             joinAgora()
-            connectFirstUsbDevice()
+            connectBluetoothDevice()
         }
     }
 
@@ -315,7 +342,7 @@ class FirstFragment : Fragment() {
         try {
             rtcEngine = RtcEngine.create(requireContext().applicationContext, AGORA_APP_ID, rtcEventHandler).apply {
                 enableVideo()
-                disableAudio()
+                enableAudio()
                 setVideoEncoderConfiguration(
                     VideoEncoderConfiguration(
                         VideoEncoderConfiguration.VideoDimensions(640, 360),
@@ -339,9 +366,9 @@ class FirstFragment : Fragment() {
                 clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
                 channelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
                 publishCameraTrack = !controllerMode
-                publishMicrophoneTrack = false
+                publishMicrophoneTrack = !controllerMode
                 autoSubscribeVideo = true
-                autoSubscribeAudio = false
+                autoSubscribeAudio = true
             }
             rtcEngine?.joinChannel(AGORA_TOKEN.ifBlank { null }, AGORA_CHANNEL, 0, options)
         } catch (error: Exception) {
@@ -490,14 +517,64 @@ class FirstFragment : Fragment() {
     private fun connectFirstUsbDevice() {
         val selected = usbManager.deviceList.values
             .sortedWith(compareBy({ it.vendorId }, { it.productId }))
-            .firstOrNull() ?: return
+            .firstOrNull()
+        if (selected == null) {
+            connectionStatus = "Arduino: не найден"
+            updateCommandStatus()
+            return
+        }
 
         if (usbManager.hasPermission(selected)) {
             openDevice(selected)
         } else {
             try {
+                connectionStatus = "Arduino: запрос разрешения"
+                updateCommandStatus()
                 usbManager.requestPermission(selected, usbPermissionIntent())
             } catch (_: RuntimeException) {
+                connectionStatus = "Arduino: ошибка разрешения"
+                updateCommandStatus()
+            }
+        }
+    }
+
+    private fun connectBluetoothDevice() {
+        if (serialConnection != null) {
+            connectionStatus = "BT: подключен"
+            updateCommandStatus()
+            return
+        }
+        if (!BluetoothRobotConnection.hasPermissions(requireContext())) {
+            connectionStatus = "BT: нужно разрешение"
+            updateCommandStatus()
+            requestPermissions(
+                BluetoothRobotConnection.requiredPermissions(),
+                BLUETOOTH_PERMISSION_REQUEST
+            )
+            return
+        }
+
+        connectionStatus = "BT: подключение"
+        updateCommandStatus()
+        thread(name = "ArduinoBluetoothConnect") {
+            try {
+                val connection = BluetoothRobotConnection.openFirstPaired(requireContext().applicationContext)
+                serialConnection = connection
+                mainHandler.post {
+                    connectionStatus = "BT: подключен"
+                    updateCommandStatus()
+                    lastCommand = ""
+                    writeCommand("M 255 255 255 255\n", force = true)
+                    mainHandler.postDelayed({
+                        writeCommand("STOP\n", force = true)
+                    }, 700)
+                }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    connectionStatus = "BT: ошибка ${error.message.orEmpty()}"
+                    updateCommandStatus()
+                    closeSerialConnection()
+                }
             }
         }
     }
@@ -522,10 +599,16 @@ class FirstFragment : Fragment() {
                 val connection = UsbSerialConnectionFactory.open(usbManager, device, BAUD_RATE)
                 serialConnection = connection
                 requireActivity().runOnUiThread {
+                    connectionStatus = "Arduino: подключен"
+                    updateCommandStatus()
                     lastCommand = ""
                     sendDriveCommand()
                 }
             } catch (error: Exception) {
+                mainHandler.post {
+                    connectionStatus = "Arduino: ошибка подключения"
+                    updateCommandStatus()
+                }
                 closeSerialConnection()
             }
         }
@@ -588,13 +671,26 @@ class FirstFragment : Fragment() {
     private fun writeCommand(command: String, force: Boolean = false) {
         if (!force && command == lastCommand) return
         lastCommand = command
+        commandTxStatus = "TX: ${command.trim()}"
+        updateCommandStatus()
 
-        val connection = serialConnection ?: return
+        val connection = serialConnection
+        if (connection == null) {
+            commandTxStatus = "TX: нет соединения"
+            updateCommandStatus()
+            return
+        }
         thread(name = "ArduinoUsbWrite") {
             try {
                 connection.write(command.toByteArray(Charsets.US_ASCII))
+                mainHandler.post {
+                    commandTxStatus = "TX OK: ${command.trim()}"
+                    updateCommandStatus()
+                }
             } catch (error: IOException) {
                 mainHandler.post {
+                    commandTxStatus = "TX: ошибка записи"
+                    updateCommandStatus()
                     closeSerialConnection()
                 }
             }
@@ -611,12 +707,24 @@ class FirstFragment : Fragment() {
         } catch (_: IOException) {
         } finally {
             serialConnection = null
+            connectionStatus = "BT: отключен"
+            updateCommandStatus()
         }
+    }
+
+    private fun updateCommandStatus() {
+        if (_binding == null) return
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { updateCommandStatus() }
+            return
+        }
+        binding.commandStatus.text = "$connectionStatus\n$commandRxStatus\n$commandTxStatus"
     }
 
     companion object {
         private const val ACTION_USB_PERMISSION = "com.example.omniwheels.USB_PERMISSION"
         private const val CAMERA_PERMISSION_REQUEST = 7
+        private const val BLUETOOTH_PERMISSION_REQUEST = 8
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
     }

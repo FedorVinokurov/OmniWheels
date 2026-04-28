@@ -30,4 +30,33 @@
         android:layout_height="128dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/mode_overlay"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:padding="24dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <Button
+            android:id="@+id/mode_camera"
+            android:layout_width="160dp"
+            android:layout_height="56dp"
+            android:text="Камера" />
+
+        <Space
+            android:layout_width="24dp"
+            android:layout_height="1dp" />
+
+        <Button
+            android:id="@+id/mode_screen"
+            android:layout_width="160dp"
+            android:layout_height="56dp"
+            android:text="Экран" />
+    </LinearLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>

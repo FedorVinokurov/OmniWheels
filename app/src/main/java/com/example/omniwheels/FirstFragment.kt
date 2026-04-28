@@ -7,13 +7,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
+import android.graphics.YuvImage
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.media.Image
+import android.media.ImageReader
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -25,10 +33,35 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.core.content.ContextCompat
+import androidx.constraintlayout.widget.ConstraintLayout
 import com.example.omniwheels.databinding.FragmentFirstBinding
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
 import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.HttpURLConnection
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketException
+import java.net.URL
+import java.nio.ByteBuffer
+import java.util.Collections
+import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private const val STREAM_PORT = 8080
+private const val STREAM_PATH = "/stream.mjpg"
+private const val COMMAND_PORT = 4210
+private const val DISCOVERY_PORT = 4211
 
 class FirstFragment : Fragment() {
 
@@ -45,8 +78,20 @@ class FirstFragment : Fragment() {
     private var serialConnection: UsbSerialConnection? = null
     private var cameraDevice: CameraDevice? = null
     private var cameraSession: CameraCaptureSession? = null
+    private var imageReader: ImageReader? = null
+    private val latestFrame = AtomicReference<ByteArray>()
+    private var mjpegServer: MjpegServer? = null
+    private var commandServer: UdpCommandServer? = null
+    private var cameraBeacon: UdpCameraBeacon? = null
+    private var cameraDiscovery: UdpCameraDiscovery? = null
+    private var cameraScanner: CameraSubnetScanner? = null
+    private var commandSender: UdpCommandSender? = null
+    private var mjpegView: MjpegView? = null
+    private var cameraHost: String? = null
     private var permissionReceiverRegistered = false
 
+    @Volatile
+    private var controllerMode = false
     private var joyX = 0f
     private var joyY = 0f
     private var rotation = 0f
@@ -94,12 +139,32 @@ class FirstFragment : Fragment() {
             sendDriveCommand()
         }
 
+        mjpegView = MjpegView(requireContext()).also { view ->
+            binding.root.addView(
+                view,
+                0,
+                ConstraintLayout.LayoutParams(
+                    ConstraintLayout.LayoutParams.MATCH_PARENT,
+                    ConstraintLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+            view.visibility = View.GONE
+        }
+
         binding.cameraPreview.surfaceTextureListener = cameraSurfaceListener
-        startCameraIfReady()
-        connectFirstUsbDevice()
+        binding.cameraPreview.visibility = View.GONE
+        binding.driveJoystick.visibility = View.GONE
+        binding.turnJoystick.visibility = View.GONE
+        binding.modeCamera.setOnClickListener {
+            configureRole(controller = false)
+        }
+        binding.modeScreen.setOnClickListener {
+            configureRole(controller = true)
+        }
     }
 
     override fun onDestroyView() {
+        stopNetworking()
         closeCamera()
         disconnect()
         unregisterUsbPermissionReceiver()
@@ -122,7 +187,7 @@ class FirstFragment : Fragment() {
 
     private val cameraSurfaceListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-            startCameraIfReady()
+            if (!controllerMode) startCameraIfReady()
         }
 
         override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
@@ -153,6 +218,47 @@ class FirstFragment : Fragment() {
         }
     }
 
+    private fun configureRole(controller: Boolean) {
+        stopNetworking()
+        closeCamera()
+        disconnect()
+        lastCommand = ""
+        cameraHost = null
+        controllerMode = controller
+        binding.modeOverlay.visibility = View.GONE
+        if (controllerMode) {
+            binding.cameraPreview.visibility = View.GONE
+            mjpegView?.visibility = View.VISIBLE
+            binding.driveJoystick.visibility = View.VISIBLE
+            binding.turnJoystick.visibility = View.VISIBLE
+            cameraDiscovery = UdpCameraDiscovery(DISCOVERY_PORT) { host ->
+                if (cameraHost == host) return@UdpCameraDiscovery
+                cameraHost = host
+                mjpegView?.play("http://$host:$STREAM_PORT$STREAM_PATH")
+                sendDriveCommand()
+            }.also { it.start() }
+            cameraScanner = CameraSubnetScanner { host ->
+                if (cameraHost == host) return@CameraSubnetScanner
+                cameraHost = host
+                mjpegView?.play("http://$host:$STREAM_PORT$STREAM_PATH")
+                sendDriveCommand()
+            }.also { it.start() }
+            commandSender = UdpCommandSender(COMMAND_PORT)
+        } else {
+            binding.cameraPreview.visibility = View.VISIBLE
+            mjpegView?.visibility = View.GONE
+            binding.driveJoystick.visibility = View.GONE
+            binding.turnJoystick.visibility = View.GONE
+            startCameraIfReady()
+            mjpegServer = MjpegServer(STREAM_PORT, latestFrame).also { it.start() }
+            commandServer = UdpCommandServer(COMMAND_PORT) { command ->
+                writeCommand(command, force = true)
+            }.also { it.start() }
+            cameraBeacon = UdpCameraBeacon(DISCOVERY_PORT).also { it.start() }
+            connectFirstUsbDevice()
+        }
+    }
+
     private fun findBackCameraId(): String? {
         val cameraIds = cameraManager.cameraIdList
         return cameraIds.firstOrNull { id ->
@@ -180,12 +286,29 @@ class FirstFragment : Fragment() {
         val texture = binding.cameraPreview.surfaceTexture ?: return
         texture.setDefaultBufferSize(binding.cameraPreview.width, binding.cameraPreview.height)
         val surface = Surface(texture)
+        imageReader = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 2).also { reader ->
+            reader.setOnImageAvailableListener({ readyReader ->
+                val image = readyReader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                try {
+                    image.use {
+                        latestFrame.set(imageToJpeg(it, 55))
+                    }
+                } catch (_: Exception) {
+                    try {
+                        image.close()
+                    } catch (_: Exception) {
+                    }
+                }
+            }, mainHandler)
+        }
+        val frameSurface = imageReader?.surface
         val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
             addTarget(surface)
+            frameSurface?.let { addTarget(it) }
         }
 
         camera.createCaptureSession(
-            listOf(surface),
+            listOfNotNull(surface, frameSurface),
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
                     cameraSession = session
@@ -202,10 +325,29 @@ class FirstFragment : Fragment() {
         try {
             cameraSession?.close()
             cameraDevice?.close()
+            imageReader?.close()
         } finally {
             cameraSession = null
             cameraDevice = null
+            imageReader = null
+            latestFrame.set(null)
         }
+    }
+
+    private fun stopNetworking() {
+        mjpegServer?.stop()
+        mjpegServer = null
+        commandServer?.stop()
+        commandServer = null
+        cameraBeacon?.stop()
+        cameraBeacon = null
+        cameraDiscovery?.stop()
+        cameraDiscovery = null
+        cameraScanner?.stop()
+        cameraScanner = null
+        commandSender?.stop()
+        commandSender = null
+        mjpegView?.stop()
     }
 
     private fun registerUsbPermissionReceiver() {
@@ -314,7 +456,11 @@ class FirstFragment : Fragment() {
             speeds[2]
         )
         val command = "M ${shieldSpeeds[0]} ${shieldSpeeds[1]} ${shieldSpeeds[2]} ${shieldSpeeds[3]}\n"
-        writeCommand(command)
+        if (controllerMode) {
+            cameraHost?.let { host -> commandSender?.send(host, command) }
+        } else {
+            writeCommand(command)
+        }
     }
 
     private fun writeCommand(command: String, force: Boolean = false) {
@@ -352,4 +498,431 @@ class FirstFragment : Fragment() {
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
     }
+}
+
+private class UdpCommandSender(private val port: Int) {
+    private val running = AtomicBoolean(true)
+
+    fun send(host: String, command: String) {
+        if (!running.get()) return
+        thread(name = "OmniUdpScreen") {
+            runCatching {
+                val bytes = command.toByteArray(Charsets.US_ASCII)
+                DatagramSocket().use { socket ->
+                    socket.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName(host), port))
+                }
+            }
+        }
+    }
+
+    fun stop() {
+        running.set(false)
+    }
+}
+
+private class UdpCommandServer(
+    private val port: Int,
+    private val onCommand: (String) -> Unit
+) {
+    private val running = AtomicBoolean(false)
+    private var socket: DatagramSocket? = null
+    private var worker: Thread? = null
+
+    fun start() {
+        if (!running.compareAndSet(false, true)) return
+        worker = thread(name = "OmniUdpRobot") {
+            try {
+                DatagramSocket(port).use { server ->
+                    socket = server
+                    val buffer = ByteArray(96)
+                    while (running.get()) {
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        server.receive(packet)
+                        val command = String(packet.data, packet.offset, packet.length, Charsets.US_ASCII).trim()
+                        if (command == "STOP" || command.startsWith("M ")) {
+                            onCommand("$command\n")
+                        }
+                    }
+                }
+            } catch (_: SocketException) {
+            } catch (_: IOException) {
+            } finally {
+                socket = null
+                running.set(false)
+            }
+        }
+    }
+
+    fun stop() {
+        running.set(false)
+        socket?.close()
+        worker?.interrupt()
+        worker = null
+    }
+}
+
+private class UdpCameraBeacon(private val port: Int) {
+    private val running = AtomicBoolean(false)
+    private var worker: Thread? = null
+
+    fun start() {
+        if (!running.compareAndSet(false, true)) return
+        worker = thread(name = "OmniCameraBeacon") {
+            while (running.get()) {
+                runCatching {
+                    DatagramSocket().use { socket ->
+                        socket.broadcast = true
+                        val bytes = "ROBOT_CAMERA $STREAM_PORT".toByteArray(Charsets.US_ASCII)
+                        broadcastTargets().forEach { target ->
+                            socket.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName(target), port))
+                        }
+                    }
+                }
+                Thread.sleep(1000)
+            }
+        }
+    }
+
+    fun stop() {
+        running.set(false)
+        worker?.interrupt()
+        worker = null
+    }
+}
+
+private class UdpCameraDiscovery(
+    private val port: Int,
+    private val onCameraFound: (String) -> Unit
+) {
+    private val running = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var socket: DatagramSocket? = null
+    private var worker: Thread? = null
+
+    fun start() {
+        if (!running.compareAndSet(false, true)) return
+        worker = thread(name = "OmniCameraDiscovery") {
+            try {
+                DatagramSocket(port).use { receiver ->
+                    socket = receiver
+                    val buffer = ByteArray(64)
+                    while (running.get()) {
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        receiver.receive(packet)
+                        val message = String(packet.data, packet.offset, packet.length, Charsets.US_ASCII).trim()
+                        if (message.startsWith("ROBOT_CAMERA")) {
+                            val host = packet.address.hostAddress ?: continue
+                            mainHandler.post { onCameraFound(host) }
+                        }
+                    }
+                }
+            } catch (_: SocketException) {
+            } catch (_: IOException) {
+            } finally {
+                socket = null
+                running.set(false)
+            }
+        }
+    }
+
+    fun stop() {
+        running.set(false)
+        socket?.close()
+        worker?.interrupt()
+        worker = null
+    }
+}
+
+private class CameraSubnetScanner(
+    private val onCameraFound: (String) -> Unit
+) {
+    private val running = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var executor = Executors.newFixedThreadPool(24)
+
+    fun start() {
+        if (!running.compareAndSet(false, true)) return
+        val ownIp = localIpAddresses().firstOrNull() ?: return
+        val prefix = ownIp.substringBeforeLast('.', missingDelimiterValue = "")
+        if (prefix.isBlank()) return
+        for (hostSuffix in 1..254) {
+            val host = "$prefix.$hostSuffix"
+            if (host == ownIp) continue
+            executor.execute {
+                if (!running.get()) return@execute
+                if (probe(host)) {
+                    mainHandler.post { onCameraFound(host) }
+                }
+            }
+        }
+    }
+
+    fun stop() {
+        running.set(false)
+        executor.shutdownNow()
+        executor = Executors.newFixedThreadPool(24)
+    }
+
+    private fun probe(host: String): Boolean {
+        return try {
+            val connection = URL("http://$host:$STREAM_PORT$STREAM_PATH").openConnection() as HttpURLConnection
+            connection.connectTimeout = 250
+            connection.readTimeout = 250
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.requestMethod = "GET"
+            connection.connect()
+            val isCamera =
+                connection.responseCode == HttpURLConnection.HTTP_OK &&
+                    (connection.contentType?.contains("multipart/x-mixed-replace") == true)
+            connection.disconnect()
+            isCamera
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
+
+private class MjpegServer(
+    private val port: Int,
+    private val latestFrame: AtomicReference<ByteArray>
+) {
+    @Volatile
+    private var running = false
+    private var serverSocket: ServerSocket? = null
+    private val clients = CopyOnWriteArraySet<Socket>()
+
+    fun start() {
+        running = true
+        thread(name = "OmniMjpegServer") {
+            try {
+                serverSocket = ServerSocket(port)
+                while (running) {
+                    val socket = serverSocket?.accept() ?: break
+                    clients += socket
+                    thread(name = "OmniMjpegClient") {
+                        serveClient(socket)
+                    }
+                }
+            } catch (_: IOException) {
+                running = false
+            }
+        }
+    }
+
+    fun stop() {
+        running = false
+        try {
+            serverSocket?.close()
+        } catch (_: IOException) {
+        }
+        clients.forEach { socket ->
+            try {
+                socket.close()
+            } catch (_: IOException) {
+            }
+        }
+        clients.clear()
+    }
+
+    private fun serveClient(socket: Socket) {
+        try {
+            socket.getInputStream().bufferedReader().readLine()
+            val output = socket.getOutputStream()
+            output.write(
+                (
+                    "HTTP/1.1 200 OK\r\n" +
+                        "Connection: close\r\n" +
+                        "Cache-Control: no-cache\r\n" +
+                        "Pragma: no-cache\r\n" +
+                        "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n"
+                    ).toByteArray()
+            )
+
+            while (running && !socket.isClosed) {
+                val frame = latestFrame.get()
+                if (frame == null) {
+                    Thread.sleep(50)
+                    continue
+                }
+                output.write("--frame\r\n".toByteArray())
+                output.write("Content-Type: image/jpeg\r\n".toByteArray())
+                output.write("Content-Length: ${frame.size}\r\n\r\n".toByteArray())
+                output.write(frame)
+                output.write("\r\n".toByteArray())
+                output.flush()
+                Thread.sleep(90)
+            }
+        } catch (_: Exception) {
+        } finally {
+            clients -= socket
+            try {
+                socket.close()
+            } catch (_: IOException) {
+            }
+        }
+    }
+}
+
+private class MjpegView(context: Context) : View(context) {
+    @Volatile
+    private var running = false
+    private var worker: Thread? = null
+    private var currentUrl: String? = null
+    private var bitmap: Bitmap? = null
+
+    fun play(url: String) {
+        if (url == currentUrl && running) return
+        stop()
+        currentUrl = url
+        running = true
+        worker = thread(name = "OmniMjpegViewer") {
+            readStream(url)
+        }
+    }
+
+    fun stop() {
+        running = false
+        worker?.interrupt()
+        worker = null
+    }
+
+    override fun onDetachedFromWindow() {
+        stop()
+        super.onDetachedFromWindow()
+    }
+
+    private fun readStream(url: String) {
+        try {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 4000
+            connection.readTimeout = 8000
+            connection.connect()
+            DataInputStream(connection.inputStream).use { input ->
+                while (running) {
+                    val frame = readJpeg(input) ?: break
+                    val decoded = BitmapFactory.decodeByteArray(frame, 0, frame.size)
+                    if (decoded != null) {
+                        bitmap = decoded
+                        postInvalidate()
+                    }
+                }
+            }
+            connection.disconnect()
+        } catch (_: Exception) {
+            running = false
+        }
+    }
+
+    private fun readJpeg(input: DataInputStream): ByteArray? {
+        val buffer = ByteArrayOutputStream()
+        var previous = -1
+        var started = false
+        while (running) {
+            val current = try {
+                input.readUnsignedByte()
+            } catch (_: IOException) {
+                return null
+            }
+            if (!started && previous == 0xFF && current == 0xD8) {
+                started = true
+                buffer.write(0xFF)
+            }
+            if (started) {
+                buffer.write(current)
+                if (previous == 0xFF && current == 0xD9) {
+                    return buffer.toByteArray()
+                }
+            }
+            previous = current
+        }
+        return null
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        canvas.drawColor(android.graphics.Color.BLACK)
+        val frame = bitmap ?: return
+        val scale = maxOf(width.toFloat() / frame.width, height.toFloat() / frame.height)
+        val drawnWidth = (frame.width * scale).toInt()
+        val drawnHeight = (frame.height * scale).toInt()
+        val left = (width - drawnWidth) / 2
+        val top = (height - drawnHeight) / 2
+        canvas.drawBitmap(frame, null, Rect(left, top, left + drawnWidth, top + drawnHeight), null)
+    }
+}
+
+private fun imageToJpeg(image: Image, quality: Int): ByteArray {
+    val nv21 = yuv420ToNv21(image)
+    val output = ByteArrayOutputStream()
+    YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+        .compressToJpeg(Rect(0, 0, image.width, image.height), quality, output)
+    return output.toByteArray()
+}
+
+private fun yuv420ToNv21(image: Image): ByteArray {
+    val width = image.width
+    val height = image.height
+    val ySize = width * height
+    val uvSize = width * height / 4
+    val output = ByteArray(ySize + uvSize * 2)
+    val yPlane = image.planes[0]
+    val uPlane = image.planes[1]
+    val vPlane = image.planes[2]
+
+    copyPlane(yPlane.buffer, yPlane.rowStride, yPlane.pixelStride, width, height, output, 0, 1)
+    copyPlane(vPlane.buffer, vPlane.rowStride, vPlane.pixelStride, width / 2, height / 2, output, ySize, 2)
+    copyPlane(uPlane.buffer, uPlane.rowStride, uPlane.pixelStride, width / 2, height / 2, output, ySize + 1, 2)
+    return output
+}
+
+private fun copyPlane(
+    buffer: ByteBuffer,
+    rowStride: Int,
+    pixelStride: Int,
+    width: Int,
+    height: Int,
+    output: ByteArray,
+    offset: Int,
+    outputPixelStride: Int
+) {
+    val row = ByteArray(rowStride)
+    var outputOffset = offset
+    buffer.rewind()
+    for (rowIndex in 0 until height) {
+        val bytesPerRow = if (rowIndex == height - 1) {
+            minOf(buffer.remaining(), rowStride)
+        } else {
+            rowStride
+        }
+        buffer.get(row, 0, bytesPerRow)
+        for (column in 0 until width) {
+            output[outputOffset] = row[column * pixelStride]
+            outputOffset += outputPixelStride
+        }
+    }
+}
+
+private fun localIpAddresses(): List<String> {
+    return try {
+        Collections.list(NetworkInterface.getNetworkInterfaces())
+            .flatMap { networkInterface ->
+                Collections.list(networkInterface.inetAddresses)
+                    .filterIsInstance<Inet4Address>()
+                    .mapNotNull { address ->
+                        address.hostAddress
+                            ?.takeIf { !address.isLoopbackAddress && !it.startsWith("169.254.") }
+                    }
+            }
+            .distinct()
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+private fun broadcastTargets(): List<String> {
+    return (localIpAddresses().mapNotNull { address ->
+        val prefix = address.substringBeforeLast('.', missingDelimiterValue = "")
+        prefix.takeIf { it.isNotBlank() }?.let { "$it.255" }
+    } + "255.255.255.255").distinct()
 }

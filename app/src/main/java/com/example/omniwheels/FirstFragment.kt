@@ -72,9 +72,8 @@ private const val STREAM_PATH = "/stream.mjpg"
 private const val COMMAND_PORT = 4210
 private const val DISCOVERY_PORT = 4211
 private const val AGORA_CHANNEL = "robot-room"
-private const val AGORA_APP_ID = "c66217ea1f454764a7d81538ca9cfa24"
-private const val AGORA_TOKEN =
-    "007eJxTYOjgFwsze3jkYNK0uw88QhkPpk2QmtwYUec3Y/mO+/XmGzYqMCSbmRkZmqcmGqaZmJqYm5kkmqdYGJoaWyQnWianJRqZ3E/4kNkQyMiwOUOXgREKQXwuhqL8pPwS3aL8/FwGBgAnXSJh"
+private const val AGORA_APP_ID = "41f7f4e1a4bd4cda9efe3fc3696e86ae"
+private const val AGORA_TOKEN = ""
 private const val LOG_TAG = "OmniAgora"
 
 class FirstFragment : Fragment() {
@@ -344,7 +343,7 @@ class FirstFragment : Fragment() {
                 autoSubscribeVideo = true
                 autoSubscribeAudio = false
             }
-            rtcEngine?.joinChannel(AGORA_TOKEN, AGORA_CHANNEL, 0, options)
+            rtcEngine?.joinChannel(AGORA_TOKEN.ifBlank { null }, AGORA_CHANNEL, 0, options)
         } catch (error: Exception) {
             Log.e(LOG_TAG, "failed to join agora", error)
             leaveAgora()

@@ -19,6 +19,10 @@ class OmniJoystickView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    private companion object {
+        const val DEAD_ZONE = 0.18f
+    }
+
     var listener: ((x: Float, y: Float) -> Unit)? = null
 
     private val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -42,6 +46,7 @@ class OmniJoystickView @JvmOverloads constructor(
 
     private var knobX = 0f
     private var knobY = 0f
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val requested = min(
@@ -72,21 +77,51 @@ class OmniJoystickView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+            MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
+                activePointerId = event.getPointerId(0)
                 updateKnob(event.x, event.y)
                 return true
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                parent?.requestDisallowInterceptTouchEvent(false)
-                knobX = 0f
-                knobY = 0f
-                listener?.invoke(0f, 0f)
-                invalidate()
+            MotionEvent.ACTION_MOVE -> {
+                val pointerIndex = event.findPointerIndex(activePointerId)
+                if (pointerIndex >= 0) {
+                    updateKnob(event.getX(pointerIndex), event.getY(pointerIndex))
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+                resetKnob()
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                val pointerIndex = event.actionIndex
+                if (event.getPointerId(pointerIndex) == activePointerId) {
+                    resetKnob()
+                }
                 return true
             }
         }
+        return true
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (!hasWindowFocus) {
+            resetKnob()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        resetKnob()
+        super.onDetachedFromWindow()
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
         return true
     }
 
@@ -99,10 +134,29 @@ class OmniJoystickView @JvmOverloads constructor(
         val distance = hypot(dx, dy)
         val clamped = min(distance, radius)
         val angle = atan2(dy, dx)
+        val normalizedDistance = clamped / radius
 
-        knobX = cos(angle) * clamped / radius
-        knobY = sin(angle) * clamped / radius
+        if (normalizedDistance < DEAD_ZONE) {
+            knobX = 0f
+            knobY = 0f
+            listener?.invoke(0f, 0f)
+            invalidate()
+            return
+        }
+
+        knobX = cos(angle) * normalizedDistance
+        knobY = sin(angle) * normalizedDistance
         listener?.invoke(knobX, knobY)
         invalidate()
+    }
+
+    private fun resetKnob() {
+        parent?.requestDisallowInterceptTouchEvent(false)
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        knobX = 0f
+        knobY = 0f
+        listener?.invoke(0f, 0f)
+        invalidate()
+        performClick()
     }
 }

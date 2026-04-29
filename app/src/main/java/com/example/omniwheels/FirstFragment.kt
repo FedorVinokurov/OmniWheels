@@ -62,6 +62,7 @@ import java.util.Collections
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
@@ -116,6 +117,10 @@ class FirstFragment : Fragment() {
     private var commandRxStatus = "CMD RX: нет"
     private var commandTxStatus = "TX: нет"
     private var connectionStatus = "BT: нет"
+    private val commandWriteExecutor = Executors.newSingleThreadExecutor()
+    private val commandWriteSequence = AtomicLong(0)
+    private val pendingCommandWrite = AtomicReference<PendingCommand?>(null)
+    private val commandWriterActive = AtomicBoolean(false)
 
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -562,12 +567,9 @@ class FirstFragment : Fragment() {
                 serialConnection = connection
                 mainHandler.post {
                     connectionStatus = "BT: подключен"
-                    updateCommandStatus()
                     lastCommand = ""
-                    writeCommand("M 255 255 255 255\n", force = true)
-                    mainHandler.postDelayed({
-                        writeCommand("STOP\n", force = true)
-                    }, 700)
+                    commandTxStatus = "TX: готов"
+                    updateCommandStatus()
                 }
             } catch (error: Exception) {
                 mainHandler.post {
@@ -669,29 +671,58 @@ class FirstFragment : Fragment() {
     }
 
     private fun writeCommand(command: String, force: Boolean = false) {
-        if (!force && command == lastCommand) return
-        lastCommand = command
-        commandTxStatus = "TX: ${command.trim()}"
+        val outgoing = command.trim()
+        if (outgoing.isBlank()) return
+        val commandLine = "$outgoing\n"
+        if (!force && commandLine == lastCommand) return
+        lastCommand = commandLine
+        val sequence = commandWriteSequence.incrementAndGet()
+        commandTxStatus = "TX: $outgoing"
         updateCommandStatus()
 
-        val connection = serialConnection
-        if (connection == null) {
-            commandTxStatus = "TX: нет соединения"
-            updateCommandStatus()
-            return
-        }
-        thread(name = "ArduinoUsbWrite") {
+        pendingCommandWrite.set(PendingCommand(commandLine, outgoing, sequence))
+        startCommandWriterIfNeeded()
+    }
+
+    private fun startCommandWriterIfNeeded() {
+        if (!commandWriterActive.compareAndSet(false, true)) return
+        commandWriteExecutor.execute {
             try {
-                connection.write(command.toByteArray(Charsets.US_ASCII))
-                mainHandler.post {
-                    commandTxStatus = "TX OK: ${command.trim()}"
-                    updateCommandStatus()
+                while (true) {
+                    val pending = pendingCommandWrite.getAndSet(null) ?: break
+                    val connection = serialConnection
+                    if (connection == null) {
+                        mainHandler.post {
+                            if (pending.sequence == commandWriteSequence.get()) {
+                                commandTxStatus = "TX: нет соединения"
+                                updateCommandStatus()
+                            }
+                        }
+                        break
+                    }
+                    try {
+                        connection.write(pending.line.toByteArray(Charsets.US_ASCII))
+                        mainHandler.post {
+                            if (pending.sequence == commandWriteSequence.get()) {
+                                commandTxStatus = "TX OK: ${pending.label}"
+                                updateCommandStatus()
+                            }
+                        }
+                    } catch (error: IOException) {
+                        mainHandler.post {
+                            if (pending.sequence == commandWriteSequence.get()) {
+                                commandTxStatus = "TX: ошибка записи"
+                                updateCommandStatus()
+                            }
+                            closeSerialConnection()
+                        }
+                        break
+                    }
                 }
-            } catch (error: IOException) {
-                mainHandler.post {
-                    commandTxStatus = "TX: ошибка записи"
-                    updateCommandStatus()
-                    closeSerialConnection()
+            } finally {
+                commandWriterActive.set(false)
+                if (pendingCommandWrite.get() != null) {
+                    startCommandWriterIfNeeded()
                 }
             }
         }
@@ -702,6 +733,8 @@ class FirstFragment : Fragment() {
     }
 
     private fun closeSerialConnection() {
+        commandWriteSequence.incrementAndGet()
+        pendingCommandWrite.set(null)
         try {
             serialConnection?.close()
         } catch (_: IOException) {
@@ -728,6 +761,12 @@ class FirstFragment : Fragment() {
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
     }
+
+    private data class PendingCommand(
+        val line: String,
+        val label: String,
+        val sequence: Long
+    )
 }
 
 private class UdpCommandSender(private val port: Int) {

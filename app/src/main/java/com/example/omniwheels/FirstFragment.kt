@@ -113,6 +113,7 @@ class FirstFragment : Fragment() {
     private var joyY = 0f
     private var rotation = 0f
     private var speedLimit = 255
+    private var zeroCommandRepeatGeneration = 0
     private var lastCommand = ""
     private var commandRxStatus = "CMD RX: нет"
     private var commandTxStatus = "TX: нет"
@@ -186,6 +187,9 @@ class FirstFragment : Fragment() {
         }
         binding.modeScreen.setOnClickListener {
             configureRole(controller = true)
+        }
+        binding.closeApp.setOnClickListener {
+            requireActivity().finishAndRemoveTask()
         }
     }
 
@@ -317,7 +321,9 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
-            binding.commandStatus.visibility = View.GONE
+            commandTxStatus = "CMD TX: нет"
+            binding.commandStatus.visibility = View.VISIBLE
+            updateCommandStatus()
             joinAgora()
         } else {
             binding.cameraPreview.visibility = View.GONE
@@ -486,6 +492,7 @@ class FirstFragment : Fragment() {
     }
 
     private fun stopNetworking() {
+        zeroCommandRepeatGeneration++
         leaveAgora()
         mjpegServer?.stop()
         mjpegServer = null
@@ -662,11 +669,37 @@ class FirstFragment : Fragment() {
         )
         val command = "M ${shieldSpeeds[0]} ${shieldSpeeds[1]} ${shieldSpeeds[2]} ${shieldSpeeds[3]}\n"
         if (controllerMode) {
-            commandStreamId?.let { streamId ->
-                rtcEngine?.sendStreamMessage(streamId, command.toByteArray(Charsets.US_ASCII))
+            sendCommandOverAgora(command)
+            if (shieldSpeeds.all { it == 0 }) {
+                repeatZeroCommandBriefly(command)
+            } else {
+                zeroCommandRepeatGeneration++
             }
         } else {
             writeCommand(command)
+        }
+    }
+
+    private fun sendCommandOverAgora(command: String) {
+        val streamId = commandStreamId
+        if (streamId == null) {
+            commandTxStatus = "CMD TX: нет Agora stream"
+            updateCommandStatus()
+            return
+        }
+        commandTxStatus = "CMD TX: ${command.trim()}"
+        updateCommandStatus()
+        rtcEngine?.sendStreamMessage(streamId, command.toByteArray(Charsets.US_ASCII))
+    }
+
+    private fun repeatZeroCommandBriefly(command: String) {
+        val generation = ++zeroCommandRepeatGeneration
+        ZERO_COMMAND_REPEAT_DELAYS_MS.forEach { delayMs ->
+            mainHandler.postDelayed({
+                if (controllerMode && generation == zeroCommandRepeatGeneration) {
+                    sendCommandOverAgora(command)
+                }
+            }, delayMs)
         }
     }
 
@@ -751,7 +784,11 @@ class FirstFragment : Fragment() {
             mainHandler.post { updateCommandStatus() }
             return
         }
-        binding.commandStatus.text = "$connectionStatus\n$commandRxStatus\n$commandTxStatus"
+        binding.commandStatus.text = if (controllerMode) {
+            commandTxStatus
+        } else {
+            "$connectionStatus\n$commandRxStatus\n$commandTxStatus"
+        }
     }
 
     companion object {
@@ -760,6 +797,7 @@ class FirstFragment : Fragment() {
         private const val BLUETOOTH_PERMISSION_REQUEST = 8
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
+        private val ZERO_COMMAND_REPEAT_DELAYS_MS = longArrayOf(40L, 90L, 150L, 240L, 360L, 520L, 700L)
     }
 
     private data class PendingCommand(

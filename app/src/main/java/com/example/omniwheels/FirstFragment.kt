@@ -26,6 +26,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.SurfaceView
 import android.view.LayoutInflater
@@ -112,11 +113,19 @@ class FirstFragment : Fragment() {
     private var joyX = 0f
     private var joyY = 0f
     private var rotation = 0f
+    private var servo1Angle = 90
+    private var lastServo1Command = ""
+    private var lastServo1SentAt = 0L
+    private var servoCenterRepeatGeneration = 0
+    private var lastMotorCommand = ""
     private var speedLimit = 255
     private var zeroCommandRepeatGeneration = 0
     private var lastCommand = ""
+    private var motorTxStatus = "MOTOR TX: no"
+    private var servoTxStatus = "SERVO TX: no"
     private var commandRxStatus = "CMD RX: нет"
     private var commandTxStatus = "TX: нет"
+    private var arduinoRxStatus = "ARD RX: нет"
     private var connectionStatus = "BT: нет"
     private val commandWriteExecutor = Executors.newSingleThreadExecutor()
     private val commandWriteSequence = AtomicLong(0)
@@ -159,9 +168,10 @@ class FirstFragment : Fragment() {
             sendDriveCommand()
         }
 
-        binding.turnJoystick.listener = { x, _ ->
+        binding.turnJoystick.listener = { x, y ->
             rotation = x
             sendDriveCommand()
+            sendServo1Command(y)
         }
 
         mjpegView = MjpegView(requireContext()).also { view ->
@@ -308,8 +318,16 @@ class FirstFragment : Fragment() {
         closeCamera()
         disconnect()
         lastCommand = ""
+        lastServo1Command = ""
+        servoCenterRepeatGeneration++
+        lastMotorCommand = ""
+        motorTxStatus = "MOTOR TX: no"
+        servoTxStatus = "SERVO TX: no"
+        servo1Angle = 90
+        lastServo1SentAt = 0L
         commandRxStatus = "CMD RX: нет"
         commandTxStatus = "TX: нет"
+        arduinoRxStatus = "ARD RX: нет"
         connectionStatus = "BT: нет"
         updateCommandStatus()
         cameraHost = null
@@ -321,6 +339,8 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
+            motorTxStatus = "MOTOR TX: no"
+            servoTxStatus = "SERVO TX: no"
             commandTxStatus = "CMD TX: нет"
             binding.commandStatus.visibility = View.VISIBLE
             updateCommandStatus()
@@ -570,12 +590,20 @@ class FirstFragment : Fragment() {
         updateCommandStatus()
         thread(name = "ArduinoBluetoothConnect") {
             try {
-                val connection = BluetoothRobotConnection.openFirstPaired(requireContext().applicationContext)
+                val connection = BluetoothRobotConnection.openFirstPaired(
+                    requireContext().applicationContext
+                ) { line ->
+                    mainHandler.post {
+                        arduinoRxStatus = line
+                        updateCommandStatus()
+                    }
+                }
                 serialConnection = connection
                 mainHandler.post {
                     connectionStatus = "BT: подключен"
                     lastCommand = ""
                     commandTxStatus = "TX: готов"
+                    arduinoRxStatus = "ARD RX: нет"
                     updateCommandStatus()
                 }
             } catch (error: Exception) {
@@ -660,6 +688,41 @@ class FirstFragment : Fragment() {
         writeCommand("STOP\n", force = true)
     }
 
+    private fun sendServo1Command(y: Float) {
+        val angle = when {
+            y > SERVO_ZONE_THRESHOLD -> 0
+            y < -SERVO_ZONE_THRESHOLD -> 180
+            else -> 90
+        }
+        if (angle == servo1Angle) return
+        servo1Angle = angle
+        val command = "S1 $angle\n"
+        if (command == lastServo1Command) return
+        lastServo1Command = command
+        lastServo1SentAt = SystemClock.uptimeMillis()
+        if (controllerMode) {
+            sendCommandOverAgora(command)
+            if (angle == 90) {
+                repeatServoCenterBriefly(command)
+            } else {
+                servoCenterRepeatGeneration++
+            }
+        } else {
+            writeCommand(command)
+        }
+    }
+
+    private fun repeatServoCenterBriefly(command: String) {
+        val generation = ++servoCenterRepeatGeneration
+        SERVO_CENTER_REPEAT_DELAYS_MS.forEach { delayMs ->
+            mainHandler.postDelayed({
+                if (controllerMode && generation == servoCenterRepeatGeneration) {
+                    sendCommandOverAgora(command)
+                }
+            }, delayMs)
+        }
+    }
+
     private fun writeMotorCommand(speeds: IntArray) {
         val shieldSpeeds = intArrayOf(
             speeds[3],
@@ -668,6 +731,8 @@ class FirstFragment : Fragment() {
             speeds[2]
         )
         val command = "M ${shieldSpeeds[0]} ${shieldSpeeds[1]} ${shieldSpeeds[2]} ${shieldSpeeds[3]}\n"
+        if (command == lastMotorCommand) return
+        lastMotorCommand = command
         if (controllerMode) {
             sendCommandOverAgora(command)
             if (shieldSpeeds.all { it == 0 }) {
@@ -682,6 +747,7 @@ class FirstFragment : Fragment() {
 
     private fun sendCommandOverAgora(command: String) {
         val streamId = commandStreamId
+        setControllerTxStatus(command, if (streamId == null) "no Agora stream" else command.trim())
         if (streamId == null) {
             commandTxStatus = "CMD TX: нет Agora stream"
             updateCommandStatus()
@@ -690,6 +756,15 @@ class FirstFragment : Fragment() {
         commandTxStatus = "CMD TX: ${command.trim()}"
         updateCommandStatus()
         rtcEngine?.sendStreamMessage(streamId, command.toByteArray(Charsets.US_ASCII))
+    }
+
+    private fun setControllerTxStatus(command: String, value: String) {
+        if (command.trim().startsWith("S1 ")) {
+            servoTxStatus = "SERVO TX: $value"
+        } else {
+            motorTxStatus = "MOTOR TX: $value"
+        }
+        commandTxStatus = "$motorTxStatus\n$servoTxStatus"
     }
 
     private fun repeatZeroCommandBriefly(command: String) {
@@ -785,9 +860,9 @@ class FirstFragment : Fragment() {
             return
         }
         binding.commandStatus.text = if (controllerMode) {
-            commandTxStatus
+            "$motorTxStatus\n$servoTxStatus"
         } else {
-            "$connectionStatus\n$commandRxStatus\n$commandTxStatus"
+            "$connectionStatus\n$commandRxStatus\n$commandTxStatus\n$arduinoRxStatus"
         }
     }
 
@@ -797,6 +872,8 @@ class FirstFragment : Fragment() {
         private const val BLUETOOTH_PERMISSION_REQUEST = 8
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
+        private const val SERVO_ZONE_THRESHOLD = 0.35f
+        private val SERVO_CENTER_REPEAT_DELAYS_MS = longArrayOf(40L, 100L, 180L, 300L, 480L)
         private val ZERO_COMMAND_REPEAT_DELAYS_MS = longArrayOf(40L, 90L, 150L, 240L, 360L, 520L, 700L)
     }
 

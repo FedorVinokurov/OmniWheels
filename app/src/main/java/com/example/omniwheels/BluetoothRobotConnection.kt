@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
@@ -25,12 +26,16 @@ private val BLE_WRITE_UUID_PRIMARY: UUID =
     UUID.fromString("0000FFE1-0000-1000-8000-00805F9B34FB")
 private val BLE_WRITE_UUID_FALLBACK: UUID =
     UUID.fromString("0000FFE2-0000-1000-8000-00805F9B34FB")
+private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID =
+    UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
 
 class BluetoothRobotConnection private constructor(
     private val gatt: BluetoothGatt,
     private val writeCharacteristics: List<BluetoothGattCharacteristic>,
+    private val onLineReceived: (String) -> Unit,
 ) : UsbSerialConnection {
     private val writeLock = Object()
+    private val readBuffer = StringBuilder()
     @Volatile private var pendingWriteLatch: CountDownLatch? = null
     @Volatile private var pendingWriteError: IOException? = null
 
@@ -76,6 +81,26 @@ class BluetoothRobotConnection private constructor(
         pendingWriteLatch?.countDown()
     }
 
+    fun onCharacteristicChanged(bytes: ByteArray) {
+        val text = bytes.toString(Charsets.UTF_8)
+        synchronized(readBuffer) {
+            for (c in text) {
+                if (c == '\n') {
+                    val line = readBuffer.toString().trim()
+                    readBuffer.clear()
+                    if (line.isNotBlank()) {
+                        onLineReceived(line)
+                    }
+                } else if (c != '\r') {
+                    readBuffer.append(c)
+                    if (readBuffer.length > 160) {
+                        readBuffer.clear()
+                    }
+                }
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun startWrite(
         characteristic: BluetoothGattCharacteristic,
@@ -110,7 +135,10 @@ class BluetoothRobotConnection private constructor(
         }
 
         @SuppressLint("MissingPermission")
-        fun openFirstPaired(context: Context): BluetoothRobotConnection {
+        fun openFirstPaired(
+            context: Context,
+            onLineReceived: (String) -> Unit = {},
+        ): BluetoothRobotConnection {
             if (!hasPermissions(context)) {
                 throw IOException("Bluetooth permission required")
             }
@@ -126,11 +154,15 @@ class BluetoothRobotConnection private constructor(
                 )
                 .firstOrNull()
                 ?: throw IOException("No paired Bluetooth devices")
-            return open(context, device)
+            return open(context, device, onLineReceived)
         }
 
         @SuppressLint("MissingPermission")
-        private fun open(context: Context, device: BluetoothDevice): BluetoothRobotConnection {
+        private fun open(
+            context: Context,
+            device: BluetoothDevice,
+            onLineReceived: (String) -> Unit,
+        ): BluetoothRobotConnection {
             val latch = CountDownLatch(1)
             var result: Result<BluetoothRobotConnection>? = null
             var connection: BluetoothRobotConnection? = null
@@ -176,8 +208,9 @@ class BluetoothRobotConnection private constructor(
                         gatt.close()
                         return
                     }
-                    val opened = BluetoothRobotConnection(gatt, writeCharacteristics)
+                    val opened = BluetoothRobotConnection(gatt, writeCharacteristics, onLineReceived)
                     connection = opened
+                    enableNotifications(gatt, service.characteristics.filter { it.canNotify() || it.canIndicate() })
                     result = Result.success(opened)
                     latch.countDown()
                 }
@@ -188,6 +221,23 @@ class BluetoothRobotConnection private constructor(
                     status: Int,
                 ) {
                     connection?.onCharacteristicWrite(status)
+                }
+
+                @Deprecated("Deprecated in Android API")
+                override fun onCharacteristicChanged(
+                    gatt: BluetoothGatt,
+                    characteristic: BluetoothGattCharacteristic,
+                ) {
+                    @Suppress("DEPRECATION")
+                    connection?.onCharacteristicChanged(characteristic.value ?: return)
+                }
+
+                override fun onCharacteristicChanged(
+                    gatt: BluetoothGatt,
+                    characteristic: BluetoothGattCharacteristic,
+                    value: ByteArray,
+                ) {
+                    connection?.onCharacteristicChanged(value)
                 }
             }
 
@@ -224,6 +274,40 @@ class BluetoothRobotConnection private constructor(
         private fun BluetoothGattCharacteristic.canWrite(): Boolean {
             return properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0 ||
                 properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+        }
+
+        private fun BluetoothGattCharacteristic.canNotify(): Boolean {
+            return properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+        }
+
+        private fun BluetoothGattCharacteristic.canIndicate(): Boolean {
+            return properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+        }
+
+        @SuppressLint("MissingPermission")
+        private fun enableNotifications(
+            gatt: BluetoothGatt,
+            characteristics: List<BluetoothGattCharacteristic>,
+        ) {
+            characteristics.forEach { characteristic ->
+                gatt.setCharacteristicNotification(characteristic, true)
+                val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
+                    ?: return@forEach
+                val value = if (characteristic.canNotify()) {
+                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                } else {
+                    BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeDescriptor(descriptor, value)
+                } else {
+                    @Suppress("DEPRECATION")
+                    descriptor.value = value
+                    @Suppress("DEPRECATION")
+                    gatt.writeDescriptor(descriptor)
+                }
+                Thread.sleep(120)
+            }
         }
 
         private fun BluetoothGattCharacteristic.supportedWriteTypes(): List<Int> {

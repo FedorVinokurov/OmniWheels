@@ -11,9 +11,6 @@ SoftwareSerial bluetooth(A0, A1); // RX, TX
 
 Servo servo1;
 const int SERVO1_PIN = 10; // Motor Shield v1 SERVO_1
-const unsigned long SERVO_HOLD_MS = 600;
-bool servo1Attached = false;
-unsigned long servo1LastCommandAt = 0;
 
 AF_DCMotor frontLeft(1);
 AF_DCMotor frontRight(2);
@@ -26,6 +23,7 @@ String bluetoothInput;
 void setup() {
   Serial.begin(115200);
   bluetooth.begin(9600);
+  servo1.attach(SERVO1_PIN);
   setServo1(90);
   stopAll();
 }
@@ -119,18 +117,11 @@ void stopAll() {
   setMotor(rearRight, 0);
 }
 
-void setServo1(int angle) {
-  if (!servo1Attached) {
-    servo1.attach(SERVO1_PIN);
-    servo1Attached = true;
-  }
-  servo1.write(angle);
-  servo1LastCommandAt = millis();
+void updateServo1() {
+  // Servo is updated immediately in setServo1().
 }
 
-void updateServo1() {
-  if (servo1Attached && millis() - servo1LastCommandAt > SERVO_HOLD_MS) {
-    servo1.detach();
-    servo1Attached = false;
-  }
+void setServo1(int angle) {
+  angle = constrain(angle, 0, 180);
+  servo1.write(angle);
 }

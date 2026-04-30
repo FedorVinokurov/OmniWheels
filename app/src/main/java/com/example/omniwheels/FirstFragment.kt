@@ -34,6 +34,7 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
+import android.widget.SeekBar
 import androidx.fragment.app.Fragment
 import androidx.core.content.ContextCompat
 import androidx.constraintlayout.widget.ConstraintLayout
@@ -201,6 +202,7 @@ class FirstFragment : Fragment() {
         binding.closeApp.setOnClickListener {
             requireActivity().finishAndRemoveTask()
         }
+        binding.cameraServoControls.setOnSeekBarChangeListener(cameraServoSeekListener)
     }
 
     private val rtcEventHandler = object : IRtcEngineEventHandler() {
@@ -339,6 +341,7 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
+            binding.cameraServoControls.visibility = View.GONE
             motorTxStatus = "MOTOR TX: no"
             servoTxStatus = "SERVO TX: no"
             commandTxStatus = "CMD TX: нет"
@@ -351,6 +354,7 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.GONE
             binding.turnJoystick.visibility = View.GONE
+            binding.cameraServoControls.visibility = View.VISIBLE
             binding.commandStatus.visibility = View.VISIBLE
             updateCommandStatus()
             val missingPermissions = listOf(
@@ -712,6 +716,29 @@ class FirstFragment : Fragment() {
         }
     }
 
+    private val cameraServoSeekListener = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            if (!fromUser) return
+            val now = SystemClock.uptimeMillis()
+            if (now - lastServo1SentAt >= CAMERA_SERVO_SLIDER_INTERVAL_MS) {
+                sendCameraServoCommand(progress)
+            }
+        }
+
+        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {
+            sendCameraServoCommand(seekBar?.progress ?: servo1Angle)
+        }
+    }
+
+    private fun sendCameraServoCommand(angle: Int) {
+        val command = "S1 ${angle.coerceIn(0, 180)}\n"
+        servo1Angle = angle.coerceIn(0, 180)
+        lastServo1Command = command
+        writeCommand(command, force = true)
+    }
+
     private fun repeatServoCenterBriefly(command: String) {
         val generation = ++servoCenterRepeatGeneration
         SERVO_CENTER_REPEAT_DELAYS_MS.forEach { delayMs ->
@@ -873,6 +900,7 @@ class FirstFragment : Fragment() {
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
         private const val SERVO_ZONE_THRESHOLD = 0.35f
+        private const val CAMERA_SERVO_SLIDER_INTERVAL_MS = 120L
         private val SERVO_CENTER_REPEAT_DELAYS_MS = longArrayOf(40L, 100L, 180L, 300L, 480L)
         private val ZERO_COMMAND_REPEAT_DELAYS_MS = longArrayOf(40L, 90L, 150L, 240L, 360L, 520L, 700L)
     }

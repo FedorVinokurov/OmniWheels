@@ -40,6 +40,18 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <SeekBar
+        android:id="@+id/screen_servo_slider"
+        android:layout_width="220dp"
+        android:layout_height="48dp"
+        android:max="180"
+        android:progress="90"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/turn_joystick"
+        app:layout_constraintEnd_toStartOf="@id/turn_joystick"
+        app:layout_constraintStart_toEndOf="@id/drive_joystick"
+        app:layout_constraintTop_toTopOf="@id/turn_joystick" />
+
     <TextView
         android:id="@+id/command_status"
         android:layout_width="wrap_content"
@@ -52,17 +64,6 @@
         android:visibility="gone"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
-
-    <SeekBar
-        android:id="@+id/camera_servo_controls"
-        android:layout_width="320dp"
-        android:layout_height="wrap_content"
-        android:max="180"
-        android:progress="90"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
 
     <LinearLayout
         android:id="@+id/mode_overlay"

@@ -115,9 +115,10 @@ class FirstFragment : Fragment() {
     private var joyY = 0f
     private var rotation = 0f
     private var servo1Angle = 90
+    private var servo1Zone = 1
+    private var screenServoSliderZone = 1
     private var lastServo1Command = ""
     private var lastServo1SentAt = 0L
-    private var servoCenterRepeatGeneration = 0
     private var lastMotorCommand = ""
     private var speedLimit = 255
     private var zeroCommandRepeatGeneration = 0
@@ -169,6 +170,10 @@ class FirstFragment : Fragment() {
             sendDriveCommand()
         }
 
+        binding.turnJoystick.limitToSquare = true
+        binding.turnJoystick.releaseListener = {
+            sendServo1CenterFromJoystickRelease()
+        }
         binding.turnJoystick.listener = { x, y ->
             rotation = x
             sendDriveCommand()
@@ -202,7 +207,7 @@ class FirstFragment : Fragment() {
         binding.closeApp.setOnClickListener {
             requireActivity().finishAndRemoveTask()
         }
-        binding.cameraServoControls.setOnSeekBarChangeListener(cameraServoSeekListener)
+        binding.screenServoSlider.setOnSeekBarChangeListener(screenServoSliderListener)
     }
 
     private val rtcEventHandler = object : IRtcEngineEventHandler() {
@@ -321,11 +326,12 @@ class FirstFragment : Fragment() {
         disconnect()
         lastCommand = ""
         lastServo1Command = ""
-        servoCenterRepeatGeneration++
         lastMotorCommand = ""
         motorTxStatus = "MOTOR TX: no"
         servoTxStatus = "SERVO TX: no"
         servo1Angle = 90
+        servo1Zone = 1
+        screenServoSliderZone = 1
         lastServo1SentAt = 0L
         commandRxStatus = "CMD RX: нет"
         commandTxStatus = "TX: нет"
@@ -341,7 +347,7 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
-            binding.cameraServoControls.visibility = View.GONE
+            binding.screenServoSlider.visibility = View.VISIBLE
             motorTxStatus = "MOTOR TX: no"
             servoTxStatus = "SERVO TX: no"
             commandTxStatus = "CMD TX: нет"
@@ -354,7 +360,7 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.GONE
             binding.turnJoystick.visibility = View.GONE
-            binding.cameraServoControls.visibility = View.VISIBLE
+            binding.screenServoSlider.visibility = View.GONE
             binding.commandStatus.visibility = View.VISIBLE
             updateCommandStatus()
             val missingPermissions = listOf(
@@ -693,60 +699,66 @@ class FirstFragment : Fragment() {
     }
 
     private fun sendServo1Command(y: Float) {
-        val angle = when {
-            y > SERVO_ZONE_THRESHOLD -> 0
-            y < -SERVO_ZONE_THRESHOLD -> 180
-            else -> 90
-        }
-        if (angle == servo1Angle) return
+        val zone = joystickServoZone(y)
+        if (zone == servo1Zone) return
+        servo1Zone = zone
+        val angle = servoZoneAngle(zone)
+        sendServo1Angle(angle)
+    }
+
+    private fun sendServo1CenterFromJoystickRelease() {
+        servo1Zone = 1
+        sendServo1Angle(90, force = true)
+    }
+
+    private fun sendServo1Angle(angle: Int, force: Boolean = false) {
         servo1Angle = angle
         val command = "S1 $angle\n"
-        if (command == lastServo1Command) return
+        if (!force && command == lastServo1Command) return
         lastServo1Command = command
         lastServo1SentAt = SystemClock.uptimeMillis()
         if (controllerMode) {
             sendCommandOverAgora(command)
-            if (angle == 90) {
-                repeatServoCenterBriefly(command)
-            } else {
-                servoCenterRepeatGeneration++
-            }
         } else {
             writeCommand(command)
         }
     }
 
-    private val cameraServoSeekListener = object : SeekBar.OnSeekBarChangeListener {
+    private fun joystickServoZone(y: Float): Int {
+        return when {
+            y > SERVO_ZONE_THRESHOLD -> 0
+            y < -SERVO_ZONE_THRESHOLD -> 2
+            else -> 1
+        }
+    }
+
+    private fun servoZoneAngle(zone: Int): Int {
+        return when (zone) {
+            0 -> 0
+            2 -> 180
+            else -> 90
+        }
+    }
+
+    private val screenServoSliderListener = object : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
             if (!fromUser) return
-            val now = SystemClock.uptimeMillis()
-            if (now - lastServo1SentAt >= CAMERA_SERVO_SLIDER_INTERVAL_MS) {
-                sendCameraServoCommand(progress)
-            }
+            val zone = screenServoSliderZone(progress)
+            if (zone == screenServoSliderZone) return
+            screenServoSliderZone = zone
+            sendServo1Angle(servoZoneAngle(zone))
         }
 
         override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
 
-        override fun onStopTrackingTouch(seekBar: SeekBar?) {
-            sendCameraServoCommand(seekBar?.progress ?: servo1Angle)
-        }
+        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
     }
 
-    private fun sendCameraServoCommand(angle: Int) {
-        val command = "S1 ${angle.coerceIn(0, 180)}\n"
-        servo1Angle = angle.coerceIn(0, 180)
-        lastServo1Command = command
-        writeCommand(command, force = true)
-    }
-
-    private fun repeatServoCenterBriefly(command: String) {
-        val generation = ++servoCenterRepeatGeneration
-        SERVO_CENTER_REPEAT_DELAYS_MS.forEach { delayMs ->
-            mainHandler.postDelayed({
-                if (controllerMode && generation == servoCenterRepeatGeneration) {
-                    sendCommandOverAgora(command)
-                }
-            }, delayMs)
+    private fun screenServoSliderZone(progress: Int): Int {
+        return when {
+            progress < 60 -> 0
+            progress > 120 -> 2
+            else -> 1
         }
     }
 
@@ -900,8 +912,6 @@ class FirstFragment : Fragment() {
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
         private const val SERVO_ZONE_THRESHOLD = 0.35f
-        private const val CAMERA_SERVO_SLIDER_INTERVAL_MS = 120L
-        private val SERVO_CENTER_REPEAT_DELAYS_MS = longArrayOf(40L, 100L, 180L, 300L, 480L)
         private val ZERO_COMMAND_REPEAT_DELAYS_MS = longArrayOf(40L, 90L, 150L, 240L, 360L, 520L, 700L)
     }
 

@@ -1,6 +1,6 @@
 #include <AFMotor.h>
 #include <SoftwareSerial.h>
-#include <Servo.h>
+#include <ServoTimer2.h>
 
 // Bluetooth:
 // BT TXD -> Arduino A0
@@ -9,8 +9,10 @@
 // BT GND -> GND
 SoftwareSerial bluetooth(A0, A1); // RX, TX
 
-Servo servo1;
+ServoTimer2 servo1;
 const int SERVO1_PIN = 10; // Motor Shield v1 SERVO_1
+const int SERVO_MIN_PULSE_US = 750;
+const int SERVO_MAX_PULSE_US = 2250;
 
 AF_DCMotor frontLeft(1);
 AF_DCMotor frontRight(2);
@@ -25,7 +27,7 @@ void setup() {
   bluetooth.begin(9600);
 
   servo1.attach(SERVO1_PIN);
-  servo1.write(90);
+  setServo1Angle(90);
 
   stopAll();
 }
@@ -63,7 +65,7 @@ void handleCommand(Stream &stream, String command) {
 
   if (command.startsWith("S1 ")) {
     int angle = constrain(command.substring(3).toInt(), 0, 180);
-    servo1.write(angle);
+    setServo1Angle(angle);
     sendAck(stream, command);
     return;
   }
@@ -115,4 +117,10 @@ void stopAll() {
   setMotor(frontRight, 0);
   setMotor(rearLeft, 0);
   setMotor(rearRight, 0);
+}
+
+void setServo1Angle(int angle) {
+  angle = constrain(angle, 0, 180);
+  int pulse = map(angle, 0, 180, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+  servo1.write(pulse);
 }

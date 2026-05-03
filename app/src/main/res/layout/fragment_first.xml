@@ -40,17 +40,73 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <SeekBar
-        android:id="@+id/screen_servo_slider"
-        android:layout_width="220dp"
-        android:layout_height="48dp"
-        android:max="180"
-        android:progress="90"
+    <LinearLayout
+        android:id="@+id/servo_controls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="@id/turn_joystick"
+        app:layout_constraintBottom_toTopOf="@id/servo_angle_value"
         app:layout_constraintEnd_toStartOf="@id/turn_joystick"
         app:layout_constraintStart_toEndOf="@id/drive_joystick"
-        app:layout_constraintTop_toTopOf="@id/turn_joystick" />
+        app:layout_constraintTop_toTopOf="@id/turn_joystick"
+        app:layout_constraintVertical_chainStyle="packed">
+
+        <EditText
+            android:id="@+id/servo_min_angle_input"
+            android:layout_width="72dp"
+            android:layout_height="48dp"
+            android:gravity="center"
+            android:inputType="number"
+            android:maxLength="3"
+            android:text="30"
+            android:textColor="@color/white"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/servo_min_button"
+            android:layout_width="72dp"
+            android:layout_height="48dp"
+            android:text="Set" />
+
+        <Space
+            android:layout_width="16dp"
+            android:layout_height="1dp" />
+
+        <EditText
+            android:id="@+id/servo_max_angle_input"
+            android:layout_width="72dp"
+            android:layout_height="48dp"
+            android:gravity="center"
+            android:inputType="number"
+            android:maxLength="3"
+            android:text="150"
+            android:textColor="@color/white"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/servo_max_button"
+            android:layout_width="72dp"
+            android:layout_height="48dp"
+            android:text="Set" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/servo_angle_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#99000000"
+        android:padding="6dp"
+        android:text="Servo: 90"
+        android:textColor="@color/white"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/turn_joystick"
+        app:layout_constraintEnd_toEndOf="@id/servo_controls"
+        app:layout_constraintStart_toStartOf="@id/servo_controls"
+        app:layout_constraintTop_toBottomOf="@id/servo_controls" />
 
     <TextView
         android:id="@+id/command_status"

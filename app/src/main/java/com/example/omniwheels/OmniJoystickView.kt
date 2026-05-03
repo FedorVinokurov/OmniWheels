@@ -7,10 +7,10 @@ import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -71,7 +71,6 @@ class OmniJoystickView @JvmOverloads constructor(
         val knobRadius = radius * 0.38f
 
         canvas.drawCircle(cx, cy, radius, basePaint)
-
         if (limitToSquare) {
             canvas.drawRect(cx - radius, cy - radius, cx + radius, cy + radius, ringPaint)
         } else {

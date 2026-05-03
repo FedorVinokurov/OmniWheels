@@ -2,11 +2,11 @@
 #include <SoftwareSerial.h>
 #include <Servo.h>
 
-// Bluetooth wiring for Arduino Uno:
-//   Bluetooth TXD -> Arduino A0
-//   Bluetooth RXD -> Arduino A1 through a 5V-to-3.3V divider
-//   Bluetooth VCC -> 5V
-//   Bluetooth GND -> GND
+// Bluetooth:
+// BT TXD -> Arduino A0
+// BT RXD -> Arduino A1 через делитель
+// BT VCC -> 5V
+// BT GND -> GND
 SoftwareSerial bluetooth(A0, A1); // RX, TX
 
 Servo servo1;
@@ -23,20 +23,22 @@ String bluetoothInput;
 void setup() {
   Serial.begin(115200);
   bluetooth.begin(9600);
+
   servo1.attach(SERVO1_PIN);
-  setServo1(90);
+  servo1.write(90);
+
   stopAll();
 }
 
 void loop() {
   readCommands(Serial, serialInput);
   readCommands(bluetooth, bluetoothInput);
-  updateServo1();
 }
 
 void readCommands(Stream &stream, String &input) {
   while (stream.available() > 0) {
     char c = stream.read();
+
     if (c == '\n') {
       handleCommand(stream, input);
       input = "";
@@ -51,9 +53,7 @@ void readCommands(Stream &stream, String &input) {
 
 void handleCommand(Stream &stream, String command) {
   command.trim();
-  if (command.length() == 0) {
-    return;
-  }
+  if (command.length() == 0) return;
 
   if (command == "STOP") {
     stopAll();
@@ -63,25 +63,24 @@ void handleCommand(Stream &stream, String command) {
 
   if (command.startsWith("S1 ")) {
     int angle = constrain(command.substring(3).toInt(), 0, 180);
-    setServo1(angle);
+    servo1.write(angle);
     sendAck(stream, command);
     return;
   }
 
-  if (!command.startsWith("M ")) {
-    return;
-  }
+  if (!command.startsWith("M ")) return;
 
   int values[4] = {0, 0, 0, 0};
   int valueIndex = 0;
   int start = 2;
+
   while (valueIndex < 4 && start < command.length()) {
     int space = command.indexOf(' ', start);
     String token = space == -1 ? command.substring(start) : command.substring(start, space);
+
     values[valueIndex++] = constrain(token.toInt(), -255, 255);
-    if (space == -1) {
-      break;
-    }
+
+    if (space == -1) break;
     start = space + 1;
   }
 
@@ -101,6 +100,7 @@ void sendAck(Stream &stream, const String &command) {
 
 void setMotor(AF_DCMotor &motor, int speed) {
   motor.setSpeed(abs(speed));
+
   if (speed > 0) {
     motor.run(FORWARD);
   } else if (speed < 0) {
@@ -115,13 +115,4 @@ void stopAll() {
   setMotor(frontRight, 0);
   setMotor(rearLeft, 0);
   setMotor(rearRight, 0);
-}
-
-void updateServo1() {
-  // Servo is updated immediately in setServo1().
-}
-
-void setServo1(int angle) {
-  angle = constrain(angle, 0, 180);
-  servo1.write(angle);
 }

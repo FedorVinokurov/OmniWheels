@@ -34,7 +34,6 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
-import android.widget.SeekBar
 import androidx.fragment.app.Fragment
 import androidx.core.content.ContextCompat
 import androidx.constraintlayout.widget.ConstraintLayout
@@ -116,7 +115,6 @@ class FirstFragment : Fragment() {
     private var rotation = 0f
     private var servo1Angle = 90
     private var servo1Zone = 1
-    private var screenServoSliderZone = 1
     private var lastServo1Command = ""
     private var lastServo1SentAt = 0L
     private var lastMotorCommand = ""
@@ -171,13 +169,10 @@ class FirstFragment : Fragment() {
         }
 
         binding.turnJoystick.limitToSquare = true
-        binding.turnJoystick.releaseListener = {
-            sendServo1CenterFromJoystickRelease()
-        }
+        binding.turnJoystick.releaseListener = null
         binding.turnJoystick.listener = { x, y ->
             rotation = x
             sendDriveCommand()
-            sendServo1Command(y)
         }
 
         mjpegView = MjpegView(requireContext()).also { view ->
@@ -207,7 +202,13 @@ class FirstFragment : Fragment() {
         binding.closeApp.setOnClickListener {
             requireActivity().finishAndRemoveTask()
         }
-        binding.screenServoSlider.setOnSeekBarChangeListener(screenServoSliderListener)
+        binding.servoMinButton.setOnClickListener {
+            setServoFromSetupControl(readServoSetupAngle(binding.servoMinAngleInput.text?.toString(), 30))
+        }
+        binding.servoMaxButton.setOnClickListener {
+            setServoFromSetupControl(readServoSetupAngle(binding.servoMaxAngleInput.text?.toString(), 150))
+        }
+        updateServoAngleLabel()
     }
 
     private val rtcEventHandler = object : IRtcEngineEventHandler() {
@@ -329,9 +330,7 @@ class FirstFragment : Fragment() {
         lastMotorCommand = ""
         motorTxStatus = "MOTOR TX: no"
         servoTxStatus = "SERVO TX: no"
-        servo1Angle = 90
-        servo1Zone = 1
-        screenServoSliderZone = 1
+        updateServoAngleLabel()
         lastServo1SentAt = 0L
         commandRxStatus = "CMD RX: нет"
         commandTxStatus = "TX: нет"
@@ -347,7 +346,8 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
-            binding.screenServoSlider.visibility = View.VISIBLE
+            binding.servoControls.visibility = View.GONE
+            binding.servoAngleValue.visibility = View.GONE
             motorTxStatus = "MOTOR TX: no"
             servoTxStatus = "SERVO TX: no"
             commandTxStatus = "CMD TX: нет"
@@ -360,7 +360,8 @@ class FirstFragment : Fragment() {
             mjpegView?.visibility = View.GONE
             binding.driveJoystick.visibility = View.GONE
             binding.turnJoystick.visibility = View.GONE
-            binding.screenServoSlider.visibility = View.GONE
+            binding.servoControls.visibility = View.VISIBLE
+            binding.servoAngleValue.visibility = View.VISIBLE
             binding.commandStatus.visibility = View.VISIBLE
             updateCommandStatus()
             val missingPermissions = listOf(
@@ -662,6 +663,12 @@ class FirstFragment : Fragment() {
     }
 
     private fun sendDriveCommand() {
+        if (MOTORS_DISABLED_FOR_SERVO_TEST) {
+            motorTxStatus = "MOTOR TX: disabled"
+            updateCommandStatus()
+            return
+        }
+
         val strafe = rotation
         val turn = joyX
         val rawFrontLeft = joyY + strafe + turn
@@ -740,26 +747,19 @@ class FirstFragment : Fragment() {
         }
     }
 
-    private val screenServoSliderListener = object : SeekBar.OnSeekBarChangeListener {
-        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-            if (!fromUser) return
-            val zone = screenServoSliderZone(progress)
-            if (zone == screenServoSliderZone) return
-            screenServoSliderZone = zone
-            sendServo1Angle(servoZoneAngle(zone))
-        }
-
-        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-
-        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+    private fun updateServoAngleLabel() {
+        if (_binding == null) return
+        binding.servoAngleValue.text = "Servo: $servo1Angle"
     }
 
-    private fun screenServoSliderZone(progress: Int): Int {
-        return when {
-            progress < 60 -> 0
-            progress > 120 -> 2
-            else -> 1
-        }
+    private fun setServoFromSetupControl(angle: Int) {
+        servo1Angle = angle.coerceIn(0, 180)
+        updateServoAngleLabel()
+        sendServo1Angle(servo1Angle, force = true)
+    }
+
+    private fun readServoSetupAngle(text: String?, fallback: Int): Int {
+        return text?.trim()?.toIntOrNull()?.coerceIn(0, 180) ?: fallback
     }
 
     private fun writeMotorCommand(speeds: IntArray) {
@@ -912,6 +912,7 @@ class FirstFragment : Fragment() {
         private const val BAUD_RATE = 115200
         private const val FULL_PWM = 255
         private const val SERVO_ZONE_THRESHOLD = 0.35f
+        private const val MOTORS_DISABLED_FOR_SERVO_TEST = true
         private val ZERO_COMMAND_REPEAT_DELAYS_MS = longArrayOf(40L, 90L, 150L, 240L, 360L, 520L, 700L)
     }
 

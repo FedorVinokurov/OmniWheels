@@ -42,10 +42,10 @@
 
     <LinearLayout
         android:id="@+id/servo_controls"
-        android:layout_width="wrap_content"
+        android:layout_width="320dp"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:visibility="gone"
         app:layout_constraintBottom_toTopOf="@id/servo_angle_value"
         app:layout_constraintEnd_toStartOf="@id/turn_joystick"
@@ -53,43 +53,12 @@
         app:layout_constraintTop_toTopOf="@id/turn_joystick"
         app:layout_constraintVertical_chainStyle="packed">
 
-        <EditText
-            android:id="@+id/servo_min_angle_input"
-            android:layout_width="72dp"
+        <SeekBar
+            android:id="@+id/servo_angle_slider"
+            android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:gravity="center"
-            android:inputType="number"
-            android:maxLength="3"
-            android:text="30"
-            android:textColor="@color/white"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/servo_min_button"
-            android:layout_width="72dp"
-            android:layout_height="48dp"
-            android:text="Set" />
-
-        <Space
-            android:layout_width="16dp"
-            android:layout_height="1dp" />
-
-        <EditText
-            android:id="@+id/servo_max_angle_input"
-            android:layout_width="72dp"
-            android:layout_height="48dp"
-            android:gravity="center"
-            android:inputType="number"
-            android:maxLength="3"
-            android:text="150"
-            android:textColor="@color/white"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/servo_max_button"
-            android:layout_width="72dp"
-            android:layout_height="48dp"
-            android:text="Set" />
+            android:max="180"
+            android:progress="90" />
     </LinearLayout>
 
     <TextView

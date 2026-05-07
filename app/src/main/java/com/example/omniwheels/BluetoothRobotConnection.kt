@@ -48,11 +48,14 @@ class BluetoothRobotConnection private constructor(
                     pendingWriteLatch = CountDownLatch(1)
                     val startError = startWrite(characteristic, bytes, writeType)
                     if (startError == null) {
+                        if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+                            pendingWriteLatch = null
+                            return
+                        }
                         val completed = pendingWriteLatch?.await(2500, TimeUnit.MILLISECONDS) == true
                         val error = pendingWriteError
                         pendingWriteLatch = null
                         if (completed && error == null) return
-                        if (!completed && writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) return
                         errors += error?.message ?: "write timeout"
                     } else {
                         pendingWriteLatch = null
@@ -312,11 +315,11 @@ class BluetoothRobotConnection private constructor(
 
         private fun BluetoothGattCharacteristic.supportedWriteTypes(): List<Int> {
             val result = mutableListOf<Int>()
-            if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
-                result += BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            }
             if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
                 result += BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            }
+            if (properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
+                result += BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             }
             return result.ifEmpty { listOf(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) }.distinct()
         }

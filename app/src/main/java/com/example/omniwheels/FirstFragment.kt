@@ -51,7 +51,7 @@ private const val SERVO_SAFE_MAX = 170
 // Настройки фильтрации данных
 private const val SERVO_THROTTLE_MS = 65L
 private const val SERVO_STEP = 2
-private const val MOTOR_THROTTLE_MS = 55L
+private const val MOTOR_THROTTLE_MS = 100L
 private const val MOTOR_DIRECTION_DEAD_ZONE = 0.25f
 private const val FULL_PWM = 255
 
@@ -87,6 +87,8 @@ class FirstFragment : Fragment() {
     private var lastMotorCommand = ""
     private var lastMotorSentAt = 0L
     private var lastCommand = ""
+    private var desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
+    private var motorSendScheduled = false
     private var forwardSpeedLimit = 120
     private var sideSpeedLimit = 170
     private var turnSpeedLimit = 180
@@ -96,10 +98,19 @@ class FirstFragment : Fragment() {
     private var arduinoRxStatus = "ARD RX: нет"
     private var commandRxStatus = "CMD RX: нет"
 
+    private var joystickDebugStatus = "JOY L: 0,0 R: 0"
+    private var desiredMotorStatus = "DES M: 0 0 0 0"
+    private var releaseDebugStatus = "RELEASE: none"
+    private var lastReleaseAt = 0L
+
     private val commandWriteExecutor = Executors.newSingleThreadExecutor()
     private val commandWriteSequence = AtomicLong(0)
     private val pendingCommandWrite = AtomicReference<PendingCommand?>(null)
     private val commandWriterActive = AtomicBoolean(false)
+    private val motorSendRunnable = Runnable {
+        motorSendScheduled = false
+        sendMotorCommand(desiredMotorSpeeds.copyOf())
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentFirstBinding.inflate(inflater, container, false)
@@ -110,18 +121,28 @@ class FirstFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.driveJoystick.snapToCardinal = true
+        binding.driveJoystick.releaseListener = {
+            joyX = 0f
+            joyY = 0f
+            sendStopBurst()
+        }
         binding.driveJoystick.listener = { x, y ->
             joyX = x; joyY = y
+            updateJoystickDebug()
             sendDriveCommand()
         }
 
         binding.turnJoystick.limitToSquare = true
-        binding.turnJoystick.snapAxesIndependently = true
+        binding.turnJoystick.snapYOnly = true
         binding.turnJoystick.resetXOnRelease = true
         binding.turnJoystick.resetYOnRelease = true
-        binding.turnJoystick.releaseListener = null
+        binding.turnJoystick.releaseListener = {
+            rotation = 0f
+            sendStopBurst()
+        }
         binding.turnJoystick.listener = { x, y ->
             rotation = x
+            updateJoystickDebug()
             sendServo1Angle(joystickYToServoAngle(y))
             sendDriveCommand()
         }
@@ -206,10 +227,70 @@ class FirstFragment : Fragment() {
             val speed = signedAxisSpeed(joyX, turnSpeedLimit)
             intArrayOf(speed, -speed, -speed, speed)
         } else {
-            val speed = signedAxisSpeed(rotation, sideSpeedLimit)
+            val speed = analogAxisSpeed(rotation, sideSpeedLimit)
             intArrayOf(speed, -speed, speed, -speed)
         }
 
+        desiredMotorSpeeds = speeds
+        updateDesiredMotorDebug()
+        queueMotorSend()
+    }
+
+    private fun signedAxisSpeed(value: Float, speedLimit: Int): Int {
+        if (speedLimit <= 0 || abs(value) < MOTOR_DIRECTION_DEAD_ZONE) return 0
+        return if (value > 0f) speedLimit else -speedLimit
+    }
+
+    private fun analogAxisSpeed(value: Float, speedLimit: Int): Int {
+        if (speedLimit <= 0 || abs(value) < MOTOR_DIRECTION_DEAD_ZONE) return 0
+        return (value.coerceIn(-1f, 1f) * speedLimit).roundToInt()
+    }
+
+    private fun sendStopBurst() {
+        joyX = 0f
+        joyY = 0f
+        rotation = 0f
+        lastReleaseAt = SystemClock.uptimeMillis()
+        updateJoystickDebug()
+        updateReleaseDebug()
+        desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
+        updateDesiredMotorDebug()
+        mainHandler.removeCallbacks(motorSendRunnable)
+        motorSendScheduled = false
+        pendingCommandWrite.set(null)
+        lastCommand = ""
+        lastMotorCommand = ""
+        sendStopCommand()
+
+        val delays = longArrayOf(0L, 40L, 100L, 220L)
+        delays.forEach { delay ->
+            mainHandler.postDelayed({
+                pendingCommandWrite.set(null)
+                lastCommand = ""
+                lastMotorCommand = ""
+                sendStopCommand()
+            }, delay)
+        }
+    }
+
+    private fun sendStopCommand() {
+        if (controllerMode) {
+            sendCommandOverAgora("STOP\n")
+        } else {
+            writeCommand("STOP\n", force = true)
+        }
+    }
+
+    private fun queueMotorSend() {
+        if (motorSendScheduled) return
+        val elapsed = SystemClock.uptimeMillis() - lastMotorSentAt
+        val delay = (MOTOR_THROTTLE_MS - elapsed).coerceAtLeast(0L)
+        motorSendScheduled = true
+        mainHandler.postDelayed(motorSendRunnable, delay)
+    }
+
+    private fun sendMotorCommand(speeds: IntArray, force: Boolean = false) {
+        val now = SystemClock.uptimeMillis()
         val shieldSpeeds = intArrayOf(
             speeds[3],
             speeds[1],
@@ -217,16 +298,11 @@ class FirstFragment : Fragment() {
             speeds[2]
         )
         val command = "M ${shieldSpeeds[0]} ${shieldSpeeds[1]} ${shieldSpeeds[2]} ${shieldSpeeds[3]}\n"
-        if (command == lastMotorCommand) return
+        if (!force && command == lastMotorCommand) return
         lastMotorCommand = command
-        lastMotorSentAt = SystemClock.uptimeMillis()
+        lastMotorSentAt = now
 
-        if (controllerMode) sendCommandOverAgora(command) else writeCommand(command)
-    }
-
-    private fun signedAxisSpeed(value: Float, speedLimit: Int): Int {
-        if (speedLimit <= 0 || abs(value) < MOTOR_DIRECTION_DEAD_ZONE) return 0
-        return if (value > 0f) speedLimit else -speedLimit
+        if (controllerMode) sendCommandOverAgora(command) else writeCommand(command, force = force)
     }
 
     private fun writeCommand(command: String, force: Boolean = false) {
@@ -244,7 +320,13 @@ class FirstFragment : Fragment() {
         lastCommand = line
 
         val seq = commandWriteSequence.incrementAndGet()
-        mainHandler.post { commandTxStatus = "TX: $cmd"; updateCommandStatus() }
+        mainHandler.post {
+            commandTxStatus = "TX: $cmd"
+            if (cmd.startsWith("M ") || cmd == "STOP") {
+                arduinoRxStatus = "ARD RX: no motor ack"
+            }
+            updateCommandStatus()
+        }
 
         pendingCommandWrite.set(PendingCommand(line, cmd, seq))
         startCommandWriterIfNeeded()
@@ -286,9 +368,34 @@ class FirstFragment : Fragment() {
         binding.turnSpeedValue.text = "Side: $turnSpeedLimit"
     }
 
-    private fun updateCommandStatus() {
-        binding.commandStatus.text = "$connectionStatus\n$commandTxStatus\n$arduinoRxStatus\n$commandRxStatus"
+    private fun updateJoystickDebug() {
+        joystickDebugStatus = "JOY L: ${joyX.toDebug()} ${joyY.toDebug()} R: ${rotation.toDebug()}"
+        updateCommandStatus()
     }
+
+    private fun updateDesiredMotorDebug() {
+        desiredMotorStatus = "DES M: ${desiredMotorSpeeds.joinToString(" ")}"
+        updateCommandStatus()
+    }
+
+    private fun updateReleaseDebug() {
+        releaseDebugStatus = if (lastReleaseAt == 0L) {
+            "RELEASE: none"
+        } else {
+            "RELEASE: ${SystemClock.uptimeMillis() - lastReleaseAt}ms"
+        }
+        updateCommandStatus()
+    }
+
+    private fun updateCommandStatus() {
+        if (lastReleaseAt != 0L) {
+            releaseDebugStatus = "RELEASE: ${SystemClock.uptimeMillis() - lastReleaseAt}ms"
+        }
+        binding.commandStatus.text =
+            "$connectionStatus\n$joystickDebugStatus\n$desiredMotorStatus\n$releaseDebugStatus\n$commandTxStatus\n$arduinoRxStatus\n$commandRxStatus"
+    }
+
+    private fun Float.toDebug(): String = String.format(java.util.Locale.US, "%.2f", this)
 
     private val axisSpeedSliderListener = object : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {

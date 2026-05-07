@@ -23,13 +23,19 @@ const int SERVO_MIN_ANGLE = 0;
 const int SERVO_MAX_ANGLE = 180;
 const int SERVO_STEP_DEGREES = 3;
 const unsigned long SERVO_UPDATE_INTERVAL_MS = 10;
+const unsigned long MOTOR_WATCHDOG_TIMEOUT_MS = 500;
 
 int servoCurrentAngle = 90;
 int servoTargetAngle = 90;
 unsigned long lastServoUpdateMs = 0;
+unsigned long lastMotorDebugMs = 0;
+unsigned long lastMotorCommandMs = 0;
+bool motorsRunning = false;
 
 char serialBuffer[48];
 byte serialIndex = 0;
+char latestCommand[48];
+bool hasLatestCommand = false;
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
@@ -38,11 +44,13 @@ void setup() {
   servo1.write(servoCurrentAngle);
 
   stopAll();
-  Serial.println("READY");
+  lastMotorCommandMs = millis();
+  Serial.println("READY NO_ACK_MOTORS");
 }
 
 void loop() {
   readCommands();
+  updateMotorWatchdog();
   updateServo();
 }
 
@@ -53,7 +61,9 @@ void readCommands() {
     if (c == '\n' || c == '\r') {
       if (serialIndex > 0) {
         serialBuffer[serialIndex] = '\0';
-        handleCommand(serialBuffer);
+        strncpy(latestCommand, serialBuffer, sizeof(latestCommand));
+        latestCommand[sizeof(latestCommand) - 1] = '\0';
+        hasLatestCommand = true;
         serialIndex = 0;
       }
       continue;
@@ -66,6 +76,11 @@ void readCommands() {
       Serial.println("ERR overflow");
     }
   }
+
+  if (hasLatestCommand) {
+    hasLatestCommand = false;
+    handleCommand(latestCommand);
+  }
 }
 
 void handleCommand(char *command) {
@@ -73,7 +88,8 @@ void handleCommand(char *command) {
 
   if (strcmp(command, "STOP") == 0) {
     stopAll();
-    Serial.println("ACK STOP");
+    lastMotorCommandMs = millis();
+    Serial.println("RX STOP");
     return;
   }
 
@@ -111,14 +127,20 @@ void handleMotorCommand(char *args) {
   setMotor(rearLeft, values[2]);
   setMotor(rearRight, values[3]);
 
-  Serial.print("ACK M ");
-  Serial.print(values[0]);
-  Serial.print(' ');
-  Serial.print(values[1]);
-  Serial.print(' ');
-  Serial.print(values[2]);
-  Serial.print(' ');
-  Serial.println(values[3]);
+  unsigned long now = millis();
+  lastMotorCommandMs = now;
+  motorsRunning = values[0] != 0 || values[1] != 0 || values[2] != 0 || values[3] != 0;
+  if (now - lastMotorDebugMs >= 200) {
+    lastMotorDebugMs = now;
+    Serial.print("RX M ");
+    Serial.print(values[0]);
+    Serial.print(' ');
+    Serial.print(values[1]);
+    Serial.print(' ');
+    Serial.print(values[2]);
+    Serial.print(' ');
+    Serial.println(values[3]);
+  }
 }
 
 void handleServoCommand(char *command) {
@@ -158,6 +180,14 @@ void updateServo() {
   servo1.write(servoCurrentAngle);
 }
 
+void updateMotorWatchdog() {
+  if (!motorsRunning) return;
+  if (millis() - lastMotorCommandMs > MOTOR_WATCHDOG_TIMEOUT_MS) {
+    stopAll();
+    Serial.println("RX WATCHDOG STOP");
+  }
+}
+
 void setMotor(AF_DCMotor &motor, int speed) {
   int pwm = abs(speed);
   motor.setSpeed(pwm);
@@ -176,4 +206,5 @@ void stopAll() {
   setMotor(frontRight, 0);
   setMotor(rearLeft, 0);
   setMotor(rearRight, 0);
+  motorsRunning = false;
 }

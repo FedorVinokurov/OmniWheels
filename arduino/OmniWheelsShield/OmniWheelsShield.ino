@@ -1,110 +1,174 @@
 #include <AFMotor.h>
-#include <SoftwareSerial.h>
-#include <ServoTimer2.h>
+#include <Servo.h>
 
-// Bluetooth:
-// BT TXD -> Arduino A0
-// BT RXD -> Arduino A1 через делитель
-SoftwareSerial bluetooth(A0, A1); 
+// Arduino Uno + Adafruit/L293D Motor Shield v1.
+// Bluetooth is connected to hardware Serial:
+// BT TXD -> Arduino D0/RX
+// BT RXD -> Arduino D1/TX through voltage divider
+// BT VCC -> 5V
+// BT GND -> GND
+//
+// Important: disconnect BT wires from D0/D1 while uploading this sketch.
 
-ServoTimer2 servo1;
-const int SERVO1_PIN = 10; 
-const int SERVO_MIN_PULSE_US = 750;
-const int SERVO_MAX_PULSE_US = 2250;
-
-// Переменные для фильтрации серво
-unsigned long lastServoUpdate = 0;
-const int SERVO_INTERVAL = 40; // Обновляем не чаще чем раз в 40мс
-int lastAngle = -1;
-const int ANGLE_THRESHOLD = 2; // Игнорируем поворот меньше чем на 2 градуса
+const unsigned long SERIAL_BAUD = 9600;
 
 AF_DCMotor frontLeft(1);
 AF_DCMotor frontRight(2);
 AF_DCMotor rearLeft(3);
 AF_DCMotor rearRight(4);
 
-String bluetoothInput = "";
+Servo servo1;
+const int SERVO1_PIN = 10;
+const int SERVO_MIN_ANGLE = 0;
+const int SERVO_MAX_ANGLE = 180;
+const int SERVO_STEP_DEGREES = 3;
+const unsigned long SERVO_UPDATE_INTERVAL_MS = 10;
+
+int servoCurrentAngle = 90;
+int servoTargetAngle = 90;
+unsigned long lastServoUpdateMs = 0;
+
+char serialBuffer[48];
+byte serialIndex = 0;
 
 void setup() {
-  Serial.begin(115200);
-  bluetooth.begin(9600); // Для SoftwareSerial 9600 - самая стабильная скорость
+  Serial.begin(SERIAL_BAUD);
 
   servo1.attach(SERVO1_PIN);
-  setServo1Angle(90);
+  servo1.write(servoCurrentAngle);
 
   stopAll();
-  Serial.println("OmniWheels Ready");
+  Serial.println("READY");
 }
 
 void loop() {
-  // Читаем только Bluetooth (Serial оставим для отладки)
-  while (bluetooth.available() > 0) {
-    char c = bluetooth.read();
-    if (c == '\n') {
-      handleCommand(bluetoothInput);
-      bluetoothInput = "";
-    } else if (c != '\r') {
-      bluetoothInput += c;
+  readCommands();
+  updateServo();
+}
+
+void readCommands() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+
+    if (c == '\n' || c == '\r') {
+      if (serialIndex > 0) {
+        serialBuffer[serialIndex] = '\0';
+        handleCommand(serialBuffer);
+        serialIndex = 0;
+      }
+      continue;
+    }
+
+    if (serialIndex < sizeof(serialBuffer) - 1) {
+      serialBuffer[serialIndex++] = c;
+    } else {
+      serialIndex = 0;
+      Serial.println("ERR overflow");
     }
   }
 }
 
-void handleCommand(String command) {
-  command.trim();
-  if (command.length() == 0) return;
+void handleCommand(char *command) {
+  if (command[0] == '\0') return;
 
-  // Управление Серво: S1 90
-  if (command.startsWith("S1 ")) {
-    int angle = command.substring(3).toInt();
-    angle = constrain(angle, 0, 180);
-
-    unsigned long now = millis();
-    // Фильтр: время + значимое изменение угла
-    if ((now - lastServoUpdate > SERVO_INTERVAL) && (abs(angle - lastAngle) >= ANGLE_THRESHOLD)) {
-      setServo1Angle(angle);
-      lastAngle = angle;
-      lastServoUpdate = now;
-      // Отправляем подтверждение (опционально)
-      bluetooth.print("ACK S1 "); bluetooth.println(angle);
-    }
-  }
-
-  // Управление моторами: M 255 -255 255 -255
-  else if (command.startsWith("M ")) {
-    parseMotorCommand(command);
-  }
-  
-  else if (command == "STOP") {
+  if (strcmp(command, "STOP") == 0) {
     stopAll();
+    Serial.println("ACK STOP");
+    return;
   }
+
+  if (command[0] == 'M' && command[1] == ' ') {
+    handleMotorCommand(command + 2);
+    return;
+  }
+
+  if (command[0] == 'S') {
+    handleServoCommand(command);
+    return;
+  }
+
+  Serial.print("ERR ");
+  Serial.println(command);
 }
 
-void parseMotorCommand(String command) {
+void handleMotorCommand(char *args) {
   int values[4] = {0, 0, 0, 0};
-  int valueIndex = 0;
-  int start = 2;
+  byte count = 0;
 
-  while (valueIndex < 4 && start < command.length()) {
-    int space = command.indexOf(' ', start);
-    String token = (space == -1) ? command.substring(start) : command.substring(start, space);
-    values[valueIndex++] = constrain(token.toInt(), -255, 255);
-    if (space == -1) break;
-    start = space + 1;
+  char *token = strtok(args, " ");
+  while (token != NULL && count < 4) {
+    values[count++] = constrain(atoi(token), -255, 255);
+    token = strtok(NULL, " ");
   }
 
-  if (valueIndex == 4) {
-    setMotor(frontLeft, values[0]);
-    setMotor(frontRight, values[1]);
-    setMotor(rearLeft, values[2]);
-    setMotor(rearRight, values[3]);
+  if (count != 4) {
+    Serial.println("ERR M");
+    return;
   }
+
+  setMotor(frontLeft, values[0]);
+  setMotor(frontRight, values[1]);
+  setMotor(rearLeft, values[2]);
+  setMotor(rearRight, values[3]);
+
+  Serial.print("ACK M ");
+  Serial.print(values[0]);
+  Serial.print(' ');
+  Serial.print(values[1]);
+  Serial.print(' ');
+  Serial.print(values[2]);
+  Serial.print(' ');
+  Serial.println(values[3]);
+}
+
+void handleServoCommand(char *command) {
+  if (command[0] == 'S' && command[1] >= '0' && command[1] <= '4' && command[2] == '\0') {
+    int step = command[1] - '0';
+    setServoTarget(map(step, 0, 4, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE));
+    return;
+  }
+
+  if (strncmp(command, "S1 ", 3) == 0) {
+    setServoTarget(atoi(command + 3));
+    return;
+  }
+
+  Serial.println("ERR S");
+}
+
+void setServoTarget(int angle) {
+  servoTargetAngle = constrain(angle, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE);
+  Serial.print("ACK S1 ");
+  Serial.println(servoTargetAngle);
+}
+
+void updateServo() {
+  unsigned long now = millis();
+  if (now - lastServoUpdateMs < SERVO_UPDATE_INTERVAL_MS) return;
+  lastServoUpdateMs = now;
+
+  if (servoCurrentAngle == servoTargetAngle) return;
+
+  if (servoCurrentAngle < servoTargetAngle) {
+    servoCurrentAngle = min(servoCurrentAngle + SERVO_STEP_DEGREES, servoTargetAngle);
+  } else {
+    servoCurrentAngle = max(servoCurrentAngle - SERVO_STEP_DEGREES, servoTargetAngle);
+  }
+
+  servo1.write(servoCurrentAngle);
 }
 
 void setMotor(AF_DCMotor &motor, int speed) {
-  motor.setSpeed(abs(speed));
-  if (speed > 0) motor.run(FORWARD);
-  else if (speed < 0) motor.run(BACKWARD);
-  else motor.run(RELEASE);
+  int pwm = abs(speed);
+  motor.setSpeed(pwm);
+
+  if (speed > 0) {
+    motor.run(FORWARD);
+  } else if (speed < 0) {
+    motor.run(BACKWARD);
+  } else {
+    motor.run(RELEASE);
+  }
 }
 
 void stopAll() {
@@ -112,9 +176,4 @@ void stopAll() {
   setMotor(frontRight, 0);
   setMotor(rearLeft, 0);
   setMotor(rearRight, 0);
-}
-
-void setServo1Angle(int angle) {
-  int pulse = map(angle, 0, 180, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
-  servo1.write(pulse);
 }

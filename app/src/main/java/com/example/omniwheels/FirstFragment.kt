@@ -52,6 +52,8 @@ private const val SERVO_SAFE_MAX = 170
 private const val SERVO_THROTTLE_MS = 65L
 private const val SERVO_STEP = 2
 private const val MOTOR_THROTTLE_MS = 55L
+private const val MOTOR_DIRECTION_DEAD_ZONE = 0.25f
+private const val FULL_PWM = 255
 
 private const val AGORA_CHANNEL = "robot-room"
 private const val AGORA_APP_ID = "41f7f4e1a4bd4cda9efe3fc3696e86ae"
@@ -72,6 +74,7 @@ class FirstFragment : Fragment() {
     private var commandStreamId: Int? = null
 
     @Volatile private var controllerMode = false
+    private var localJoystickMode = false
     private var joyX = 0f
     private var joyY = 0f
     private var rotation = 0f
@@ -84,6 +87,9 @@ class FirstFragment : Fragment() {
     private var lastMotorCommand = ""
     private var lastMotorSentAt = 0L
     private var lastCommand = ""
+    private var forwardSpeedLimit = FULL_PWM
+    private var sideSpeedLimit = FULL_PWM
+    private var turnSpeedLimit = FULL_PWM
 
     private var connectionStatus = "BT: нет"
     private var commandTxStatus = "TX: нет"
@@ -108,8 +114,13 @@ class FirstFragment : Fragment() {
             sendDriveCommand()
         }
 
+        binding.turnJoystick.limitToSquare = true
+        binding.turnJoystick.resetXOnRelease = true
+        binding.turnJoystick.resetYOnRelease = true
+        binding.turnJoystick.releaseListener = null
         binding.turnJoystick.listener = { x, y ->
             rotation = x
+            sendServo1Angle(joystickYToServoAngle(y))
             sendDriveCommand()
         }
 
@@ -117,12 +128,23 @@ class FirstFragment : Fragment() {
         binding.servoAngleSlider.max = 180
         binding.servoAngleSlider.progress = servo1Angle
         binding.servoAngleSlider.setOnSeekBarChangeListener(servoAngleSliderListener)
+        binding.forwardSpeedSlider.max = FULL_PWM
+        binding.forwardSpeedSlider.progress = forwardSpeedLimit
+        binding.forwardSpeedSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
+        binding.sideSpeedSlider.max = FULL_PWM
+        binding.sideSpeedSlider.progress = sideSpeedLimit
+        binding.sideSpeedSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
+        binding.turnSpeedSlider.max = FULL_PWM
+        binding.turnSpeedSlider.progress = turnSpeedLimit
+        binding.turnSpeedSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
 
         binding.modeCamera.setOnClickListener { configureRole(controller = false) }
         binding.modeScreen.setOnClickListener { configureRole(controller = true) }
+        binding.modeJoystick.setOnClickListener { configureJoystickMode() }
         binding.closeApp.setOnClickListener { requireActivity().finishAndRemoveTask() }
 
         updateServoAngleLabel()
+        updateSpeedLabels()
         updateCommandStatus()
     }
 
@@ -167,31 +189,39 @@ class FirstFragment : Fragment() {
         }
     }
 
+    private fun joystickYToServoAngle(y: Float): Int {
+        val normalized = ((1f - y.coerceIn(-1f, 1f)) / 2f)
+        return (normalized * 180f).roundToInt().coerceIn(SERVO_SAFE_MIN, SERVO_SAFE_MAX)
+    }
+
     private fun sendDriveCommand() {
         val now = SystemClock.uptimeMillis()
         if (now - lastMotorSentAt < MOTOR_THROTTLE_MS) return
         lastMotorSentAt = now
 
-        val strafe = rotation
-        val turn = joyX
-        val rawFL = joyY + strafe + turn
-        val rawFR = joyY - strafe - turn
-        val rawRL = joyY + strafe - turn
-        val rawRR = joyY - strafe + turn
-
-        val maxMag = maxOf(1f, abs(rawFL), abs(rawFR), abs(rawRL), abs(rawRR))
-        val speeds = intArrayOf(
-            ((rawFL / maxMag) * 255).roundToInt(),
-            ((rawFR / maxMag) * 255).roundToInt(),
-            ((rawRL / maxMag) * 255).roundToInt(),
-            ((rawRR / maxMag) * 255).roundToInt()
-        )
+        val leftJoystickActive = abs(joyX) >= MOTOR_DIRECTION_DEAD_ZONE ||
+            abs(joyY) >= MOTOR_DIRECTION_DEAD_ZONE
+        val speeds = if (leftJoystickActive && abs(joyY) >= abs(joyX)) {
+            val speed = signedAxisSpeed(joyY, forwardSpeedLimit)
+            intArrayOf(speed, speed, speed, speed)
+        } else if (leftJoystickActive) {
+            val speed = signedAxisSpeed(joyX, sideSpeedLimit)
+            intArrayOf(speed, -speed, -speed, speed)
+        } else {
+            val speed = signedAxisSpeed(rotation, turnSpeedLimit)
+            intArrayOf(speed, -speed, speed, -speed)
+        }
 
         val command = "M ${speeds[0]} ${speeds[1]} ${speeds[2]} ${speeds[3]}\n"
         if (command == lastMotorCommand) return
         lastMotorCommand = command
 
         if (controllerMode) sendCommandOverAgora(command) else writeCommand(command)
+    }
+
+    private fun signedAxisSpeed(value: Float, speedLimit: Int): Int {
+        if (speedLimit <= 0 || abs(value) < MOTOR_DIRECTION_DEAD_ZONE) return 0
+        return if (value > 0f) speedLimit else -speedLimit
     }
 
     private fun writeCommand(command: String, force: Boolean = false) {
@@ -228,8 +258,44 @@ class FirstFragment : Fragment() {
         binding.servoAngleValue.text = "Servo: $servo1Angle°"
     }
 
+    private fun updateSpeedLabels() {
+        binding.forwardSpeedValue.text = "Forward: $forwardSpeedLimit"
+        binding.sideSpeedValue.text = "Side: $sideSpeedLimit"
+        binding.turnSpeedValue.text = "Turn: $turnSpeedLimit"
+    }
+
     private fun updateCommandStatus() {
         binding.commandStatus.text = "$connectionStatus\n$commandTxStatus\n$arduinoRxStatus\n$commandRxStatus"
+    }
+
+    private val axisSpeedSliderListener = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+            updateAxisSpeed(seekBar, progress)
+            if (controllerMode || localJoystickMode) {
+                lastMotorCommand = ""
+                sendDriveCommand()
+            }
+        }
+
+        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {
+            updateAxisSpeed(seekBar, seekBar?.progress ?: 0)
+            if (controllerMode || localJoystickMode) {
+                lastMotorCommand = ""
+                sendDriveCommand()
+            }
+        }
+    }
+
+    private fun updateAxisSpeed(seekBar: SeekBar?, progress: Int) {
+        val value = progress.coerceIn(0, FULL_PWM)
+        when (seekBar?.id) {
+            R.id.forward_speed_slider -> forwardSpeedLimit = value
+            R.id.side_speed_slider -> sideSpeedLimit = value
+            R.id.turn_speed_slider -> turnSpeedLimit = value
+        }
+        updateSpeedLabels()
     }
 
     // --- Логика Agora ---
@@ -257,18 +323,35 @@ class FirstFragment : Fragment() {
 
     private fun configureRole(controller: Boolean) {
         controllerMode = controller
+        localJoystickMode = false
         binding.modeOverlay.visibility = View.GONE
         binding.commandStatus.visibility = View.VISIBLE
 
         if (controllerMode) {
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
+            binding.speedControls.visibility = View.VISIBLE
             binding.servoControls.visibility = View.GONE
         } else {
+            binding.speedControls.visibility = View.GONE
             binding.servoControls.visibility = View.VISIBLE
             connectBluetooth()
         }
         initAgora()
+    }
+
+    private fun configureJoystickMode() {
+        controllerMode = false
+        localJoystickMode = true
+        binding.modeOverlay.visibility = View.GONE
+        binding.commandStatus.visibility = View.VISIBLE
+        binding.driveJoystick.visibility = View.VISIBLE
+        binding.turnJoystick.visibility = View.VISIBLE
+        binding.speedControls.visibility = View.VISIBLE
+        binding.servoControls.visibility = View.GONE
+        binding.servoAngleValue.visibility = View.GONE
+        binding.agoraVideoContainer.removeAllViews()
+        connectBluetooth()
     }
 
     private fun initAgora() {

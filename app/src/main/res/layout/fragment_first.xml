@@ -41,6 +41,75 @@
         app:layout_constraintEnd_toEndOf="parent" />
 
     <LinearLayout
+        android:id="@+id/speed_controls"
+        android:layout_width="360dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:background="#99000000"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/turn_joystick"
+        app:layout_constraintStart_toEndOf="@id/drive_joystick">
+
+        <TextView
+            android:id="@+id/forward_speed_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#99000000"
+            android:padding="6dp"
+            android:text="Forward: 255"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/forward_speed_slider"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:max="255"
+            android:progress="255" />
+
+        <TextView
+            android:id="@+id/side_speed_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#99000000"
+            android:padding="6dp"
+            android:text="Side: 255"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/side_speed_slider"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:max="255"
+            android:progress="255" />
+
+        <TextView
+            android:id="@+id/turn_speed_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#99000000"
+            android:padding="6dp"
+            android:text="Turn: 255"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/turn_speed_slider"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:max="255"
+            android:progress="255" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/servo_controls"
         android:layout_width="320dp"
         android:layout_height="wrap_content"
@@ -83,7 +152,7 @@
         android:layout_height="wrap_content"
         android:background="#99000000"
         android:padding="8dp"
-        android:text="CMD: нет"
+        android:text="CMD: no"
         android:textColor="@color/white"
         android:textSize="14sp"
         android:visibility="gone"
@@ -106,7 +175,7 @@
             android:id="@+id/mode_camera"
             android:layout_width="160dp"
             android:layout_height="56dp"
-            android:text="Камера" />
+            android:text="Camera" />
 
         <Space
             android:layout_width="24dp"
@@ -116,7 +185,17 @@
             android:id="@+id/mode_screen"
             android:layout_width="160dp"
             android:layout_height="56dp"
-            android:text="Экран" />
+            android:text="Screen" />
+
+        <Space
+            android:layout_width="24dp"
+            android:layout_height="1dp" />
+
+        <Button
+            android:id="@+id/mode_joystick"
+            android:layout_width="160dp"
+            android:layout_height="56dp"
+            android:text="Joystick" />
     </LinearLayout>
 
     <TextView
@@ -124,11 +203,11 @@
         android:layout_width="48dp"
         android:layout_height="48dp"
         android:gravity="center"
+        android:scaleY="0.8"
         android:text="X"
         android:textColor="@color/white"
         android:textSize="28sp"
         android:textStyle="bold"
-        android:scaleY="0.8"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 </androidx.constraintlayout.widget.ConstraintLayout>

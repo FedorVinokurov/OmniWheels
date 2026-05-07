@@ -78,7 +78,7 @@
             android:layout_height="wrap_content"
             android:background="#99000000"
             android:padding="6dp"
-            android:text="Side: 170"
+            android:text="Turn: 170"
             android:textColor="@color/white"
             android:textSize="16sp"
             android:textStyle="bold" />
@@ -96,7 +96,7 @@
             android:layout_height="wrap_content"
             android:background="#99000000"
             android:padding="6dp"
-            android:text="Turn: 180"
+            android:text="Side: 180"
             android:textColor="@color/white"
             android:textSize="16sp"
             android:textStyle="bold" />

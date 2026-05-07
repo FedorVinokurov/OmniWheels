@@ -282,8 +282,8 @@ class FirstFragment : Fragment() {
 
     private fun updateSpeedLabels() {
         binding.forwardSpeedValue.text = "Forward: $forwardSpeedLimit"
-        binding.sideSpeedValue.text = "Side: $sideSpeedLimit"
-        binding.turnSpeedValue.text = "Turn: $turnSpeedLimit"
+        binding.sideSpeedValue.text = "Turn: $sideSpeedLimit"
+        binding.turnSpeedValue.text = "Side: $turnSpeedLimit"
     }
 
     private fun updateCommandStatus() {

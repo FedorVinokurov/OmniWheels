@@ -27,6 +27,8 @@ class OmniJoystickView @JvmOverloads constructor(
     var listener: ((x: Float, y: Float) -> Unit)? = null
     var releaseListener: (() -> Unit)? = null
     var limitToSquare: Boolean = false
+    var snapAxesIndependently: Boolean = false
+    var snapToCardinal: Boolean = false
     var resetXOnRelease: Boolean = true
     var resetYOnRelease: Boolean = true
 
@@ -174,13 +176,35 @@ class OmniJoystickView @JvmOverloads constructor(
     }
 
     private fun setKnob(x: Float, y: Float) {
-        knobX = x
-        knobY = y
-        if (x != lastSentX || y != lastSentY) {
-            lastSentX = x
-            lastSentY = y
-            listener?.invoke(x, y)
+        val snapped = when {
+            snapAxesIndependently -> snapAxes(x, y)
+            snapToCardinal -> snapCardinal(x, y)
+            else -> x to y
+        }
+        knobX = snapped.first
+        knobY = snapped.second
+        if (knobX != lastSentX || knobY != lastSentY) {
+            lastSentX = knobX
+            lastSentY = knobY
+            listener?.invoke(knobX, knobY)
         }
         invalidate()
+    }
+
+    private fun snapCardinal(x: Float, y: Float): Pair<Float, Float> {
+        if (abs(x) < DEAD_ZONE && abs(y) < DEAD_ZONE) return 0f to 0f
+        return if (abs(x) > abs(y)) {
+            if (x > 0f) 1f to 0f else -1f to 0f
+        } else {
+            if (y > 0f) 0f to 1f else 0f to -1f
+        }
+    }
+
+    private fun snapAxes(x: Float, y: Float): Pair<Float, Float> {
+        fun snap(value: Float): Float {
+            if (abs(value) < DEAD_ZONE) return 0f
+            return if (value > 0f) 1f else -1f
+        }
+        return snap(x) to snap(y)
     }
 }

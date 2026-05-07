@@ -87,9 +87,9 @@ class FirstFragment : Fragment() {
     private var lastMotorCommand = ""
     private var lastMotorSentAt = 0L
     private var lastCommand = ""
-    private var forwardSpeedLimit = FULL_PWM
-    private var sideSpeedLimit = FULL_PWM
-    private var turnSpeedLimit = FULL_PWM
+    private var forwardSpeedLimit = 120
+    private var sideSpeedLimit = 170
+    private var turnSpeedLimit = 180
 
     private var connectionStatus = "BT: нет"
     private var commandTxStatus = "TX: нет"
@@ -109,12 +109,14 @@ class FirstFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        binding.driveJoystick.snapToCardinal = true
         binding.driveJoystick.listener = { x, y ->
             joyX = x; joyY = y
             sendDriveCommand()
         }
 
         binding.turnJoystick.limitToSquare = true
+        binding.turnJoystick.snapAxesIndependently = true
         binding.turnJoystick.resetXOnRelease = true
         binding.turnJoystick.resetYOnRelease = true
         binding.turnJoystick.releaseListener = null
@@ -195,26 +197,29 @@ class FirstFragment : Fragment() {
     }
 
     private fun sendDriveCommand() {
-        val now = SystemClock.uptimeMillis()
-        if (now - lastMotorSentAt < MOTOR_THROTTLE_MS) return
-        lastMotorSentAt = now
-
         val leftJoystickActive = abs(joyX) >= MOTOR_DIRECTION_DEAD_ZONE ||
             abs(joyY) >= MOTOR_DIRECTION_DEAD_ZONE
         val speeds = if (leftJoystickActive && abs(joyY) >= abs(joyX)) {
             val speed = signedAxisSpeed(joyY, forwardSpeedLimit)
             intArrayOf(speed, speed, speed, speed)
         } else if (leftJoystickActive) {
-            val speed = signedAxisSpeed(joyX, sideSpeedLimit)
+            val speed = signedAxisSpeed(joyX, turnSpeedLimit)
             intArrayOf(speed, -speed, -speed, speed)
         } else {
-            val speed = signedAxisSpeed(rotation, turnSpeedLimit)
+            val speed = signedAxisSpeed(rotation, sideSpeedLimit)
             intArrayOf(speed, -speed, speed, -speed)
         }
 
-        val command = "M ${speeds[0]} ${speeds[1]} ${speeds[2]} ${speeds[3]}\n"
+        val shieldSpeeds = intArrayOf(
+            speeds[3],
+            speeds[1],
+            speeds[0],
+            speeds[2]
+        )
+        val command = "M ${shieldSpeeds[0]} ${shieldSpeeds[1]} ${shieldSpeeds[2]} ${shieldSpeeds[3]}\n"
         if (command == lastMotorCommand) return
         lastMotorCommand = command
+        lastMotorSentAt = SystemClock.uptimeMillis()
 
         if (controllerMode) sendCommandOverAgora(command) else writeCommand(command)
     }
@@ -228,6 +233,12 @@ class FirstFragment : Fragment() {
         val cmd = command.trim()
         if (cmd.isEmpty()) return
         val line = "$cmd\n"
+
+        if (!controllerMode && serialConnection == null) {
+            commandTxStatus = "TX: wait BT"
+            updateCommandStatus()
+            return
+        }
 
         if (!force && line == lastCommand) return
         lastCommand = line
@@ -248,9 +259,20 @@ class FirstFragment : Fragment() {
                     val conn = serialConnection ?: break
                     try {
                         conn.write(p.line.toByteArray(Charsets.US_ASCII))
-                    } catch (e: IOException) { break }
+                    } catch (e: IOException) {
+                        mainHandler.post {
+                            commandTxStatus = "TX: error"
+                            updateCommandStatus()
+                        }
+                        break
+                    }
                 }
-            } finally { commandWriterActive.set(false) }
+            } finally {
+                commandWriterActive.set(false)
+                if (pendingCommandWrite.get() != null) {
+                    startCommandWriterIfNeeded()
+                }
+            }
         }
     }
 
@@ -395,7 +417,15 @@ class FirstFragment : Fragment() {
                 serialConnection = BluetoothRobotConnection.openFirstPaired(requireContext()) { line ->
                     mainHandler.post { arduinoRxStatus = line; updateCommandStatus() }
                 }
-                mainHandler.post { connectionStatus = "BT: OK"; updateCommandStatus() }
+                mainHandler.post {
+                    connectionStatus = "BT: OK"
+                    lastCommand = ""
+                    lastMotorCommand = ""
+                    lastServo1Command = ""
+                    updateCommandStatus()
+                    sendDriveCommand()
+                    sendServo1Angle(servo1Angle, force = true)
+                }
             } catch (e: Exception) { mainHandler.post { connectionStatus = "BT: Ошибка" } }
         }
     }

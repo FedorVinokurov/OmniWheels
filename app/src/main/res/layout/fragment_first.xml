@@ -60,7 +60,7 @@
             android:layout_height="wrap_content"
             android:background="#99000000"
             android:padding="6dp"
-            android:text="Forward: 255"
+            android:text="Forward: 120"
             android:textColor="@color/white"
             android:textSize="16sp"
             android:textStyle="bold" />
@@ -70,7 +70,7 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:max="255"
-            android:progress="255" />
+            android:progress="120" />
 
         <TextView
             android:id="@+id/side_speed_value"
@@ -78,7 +78,7 @@
             android:layout_height="wrap_content"
             android:background="#99000000"
             android:padding="6dp"
-            android:text="Side: 255"
+            android:text="Side: 170"
             android:textColor="@color/white"
             android:textSize="16sp"
             android:textStyle="bold" />
@@ -88,7 +88,7 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:max="255"
-            android:progress="255" />
+            android:progress="170" />
 
         <TextView
             android:id="@+id/turn_speed_value"
@@ -96,7 +96,7 @@
             android:layout_height="wrap_content"
             android:background="#99000000"
             android:padding="6dp"
-            android:text="Turn: 255"
+            android:text="Turn: 180"
             android:textColor="@color/white"
             android:textSize="16sp"
             android:textStyle="bold" />
@@ -106,7 +106,7 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:max="255"
-            android:progress="255" />
+            android:progress="180" />
     </LinearLayout>
 
     <LinearLayout

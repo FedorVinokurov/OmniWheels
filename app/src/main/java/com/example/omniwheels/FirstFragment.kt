@@ -387,7 +387,7 @@ class FirstFragment : Fragment() {
         val visible = if (debugPanelVisible) View.VISIBLE else View.GONE
         binding.commandStatus.visibility = visible
         binding.speedControls.visibility =
-            if (debugPanelVisible && (controllerMode || localJoystickMode)) View.VISIBLE else View.GONE
+            if (debugPanelVisible && binding.driveJoystick.visibility == View.VISIBLE) View.VISIBLE else View.GONE
     }
 
     private fun updateJoystickDebug() {
@@ -478,11 +478,9 @@ class FirstFragment : Fragment() {
         binding.modeOverlay.visibility = View.GONE
 
         if (controllerMode) {
-            binding.driveJoystick.visibility = View.VISIBLE
-            binding.turnJoystick.visibility = View.VISIBLE
-            binding.servoControls.visibility = View.GONE
+            showControlUi()
         } else {
-            binding.servoControls.visibility = View.VISIBLE
+            showControlUi()
             connectBluetooth()
         }
         updateDebugPanelVisibility()
@@ -493,13 +491,18 @@ class FirstFragment : Fragment() {
         controllerMode = false
         localJoystickMode = true
         binding.modeOverlay.visibility = View.GONE
+        showControlUi()
+        binding.agoraVideoContainer.removeAllViews()
+        updateDebugPanelVisibility()
+        connectBluetooth()
+    }
+
+    private fun showControlUi() {
         binding.driveJoystick.visibility = View.VISIBLE
         binding.turnJoystick.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
-        binding.agoraVideoContainer.removeAllViews()
         updateDebugPanelVisibility()
-        connectBluetooth()
     }
 
     private fun initAgora() {

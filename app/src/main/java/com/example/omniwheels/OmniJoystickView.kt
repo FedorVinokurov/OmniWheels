@@ -105,7 +105,13 @@ class OmniJoystickView @JvmOverloads constructor(
                 return true
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+            MotionEvent.ACTION_UP -> {
+                updateKnob(event.x, event.y)
+                resetKnob()
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
                 resetKnob()
                 return true
             }
@@ -113,6 +119,7 @@ class OmniJoystickView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_UP -> {
                 val pointerIndex = event.actionIndex
                 if (event.getPointerId(pointerIndex) == activePointerId) {
+                    updateKnob(event.getX(pointerIndex), event.getY(pointerIndex))
                     resetKnob()
                 }
                 return true

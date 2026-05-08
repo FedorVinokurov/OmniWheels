@@ -75,9 +75,11 @@ class FirstFragment : Fragment() {
 
     @Volatile private var controllerMode = false
     private var localJoystickMode = false
+    private var debugPanelVisible = false
     private var joyX = 0f
     private var joyY = 0f
     private var rotation = 0f
+    private var turnY = 0f
 
     private var servo1Angle = 90
     private var lastSentServoAngle = -1
@@ -90,7 +92,7 @@ class FirstFragment : Fragment() {
     private var desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
     private var motorSendScheduled = false
     private var forwardSpeedLimit = 120
-    private var sideSpeedLimit = 170
+    private var sideSpeedLimit = 136
     private var turnSpeedLimit = 180
 
     private var connectionStatus = "BT: нет"
@@ -109,7 +111,11 @@ class FirstFragment : Fragment() {
     private val commandWriterActive = AtomicBoolean(false)
     private val motorSendRunnable = Runnable {
         motorSendScheduled = false
-        sendMotorCommand(desiredMotorSpeeds.copyOf())
+        val keepAlive = desiredMotorSpeeds.any { it != 0 }
+        sendMotorCommand(desiredMotorSpeeds.copyOf(), force = keepAlive)
+        if (keepAlive) {
+            queueMotorSend()
+        }
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -135,13 +141,17 @@ class FirstFragment : Fragment() {
         binding.turnJoystick.limitToSquare = true
         binding.turnJoystick.snapYOnly = true
         binding.turnJoystick.resetXOnRelease = true
-        binding.turnJoystick.resetYOnRelease = true
+        binding.turnJoystick.resetYOnRelease = false
         binding.turnJoystick.releaseListener = {
             rotation = 0f
             sendStopBurst()
+            mainHandler.postDelayed({
+                sendServo1Angle(joystickYToServoAngle(turnY), force = true)
+            }, 260L)
         }
         binding.turnJoystick.listener = { x, y ->
             rotation = x
+            turnY = y
             updateJoystickDebug()
             sendServo1Angle(joystickYToServoAngle(y))
             sendDriveCommand()
@@ -164,10 +174,15 @@ class FirstFragment : Fragment() {
         binding.modeCamera.setOnClickListener { configureRole(controller = false) }
         binding.modeScreen.setOnClickListener { configureRole(controller = true) }
         binding.modeJoystick.setOnClickListener { configureJoystickMode() }
+        binding.debugToggle.setOnClickListener {
+            debugPanelVisible = !debugPanelVisible
+            updateDebugPanelVisibility()
+        }
         binding.closeApp.setOnClickListener { requireActivity().finishAndRemoveTask() }
 
         updateServoAngleLabel()
         updateSpeedLabels()
+        updateDebugPanelVisibility()
         updateCommandStatus()
     }
 
@@ -368,6 +383,13 @@ class FirstFragment : Fragment() {
         binding.turnSpeedValue.text = "Side: $turnSpeedLimit"
     }
 
+    private fun updateDebugPanelVisibility() {
+        val visible = if (debugPanelVisible) View.VISIBLE else View.GONE
+        binding.commandStatus.visibility = visible
+        binding.speedControls.visibility =
+            if (debugPanelVisible && (controllerMode || localJoystickMode)) View.VISIBLE else View.GONE
+    }
+
     private fun updateJoystickDebug() {
         joystickDebugStatus = "JOY L: ${joyX.toDebug()} ${joyY.toDebug()} R: ${rotation.toDebug()}"
         updateCommandStatus()
@@ -454,18 +476,16 @@ class FirstFragment : Fragment() {
         controllerMode = controller
         localJoystickMode = false
         binding.modeOverlay.visibility = View.GONE
-        binding.commandStatus.visibility = View.VISIBLE
 
         if (controllerMode) {
             binding.driveJoystick.visibility = View.VISIBLE
             binding.turnJoystick.visibility = View.VISIBLE
-            binding.speedControls.visibility = View.VISIBLE
             binding.servoControls.visibility = View.GONE
         } else {
-            binding.speedControls.visibility = View.GONE
             binding.servoControls.visibility = View.VISIBLE
             connectBluetooth()
         }
+        updateDebugPanelVisibility()
         initAgora()
     }
 
@@ -473,13 +493,12 @@ class FirstFragment : Fragment() {
         controllerMode = false
         localJoystickMode = true
         binding.modeOverlay.visibility = View.GONE
-        binding.commandStatus.visibility = View.VISIBLE
         binding.driveJoystick.visibility = View.VISIBLE
         binding.turnJoystick.visibility = View.VISIBLE
-        binding.speedControls.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
         binding.agoraVideoContainer.removeAllViews()
+        updateDebugPanelVisibility()
         connectBluetooth()
     }
 

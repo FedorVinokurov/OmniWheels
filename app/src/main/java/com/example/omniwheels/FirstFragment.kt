@@ -16,6 +16,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
@@ -156,6 +157,10 @@ class FirstFragment : Fragment() {
             sendServo1Angle(joystickYToServoAngle(y))
             sendDriveCommand()
         }
+        setSideButtonListener(binding.sideLeftButton, -1f)
+        setSideButtonListener(binding.sideRightButton, 1f)
+        setCameraButtonListener(binding.cameraUpButton, 1f)
+        setCameraButtonListener(binding.cameraDownButton, -1f)
 
         // Настройка слайдера с безопасными границами
         binding.servoAngleSlider.max = 180
@@ -184,6 +189,55 @@ class FirstFragment : Fragment() {
         updateSpeedLabels()
         updateDebugPanelVisibility()
         updateCommandStatus()
+    }
+
+    private fun setSideButtonListener(view: View, value: Float) {
+        view.setOnTouchListener { pressedView, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressedView.alpha = 0.55f
+                    rotation = value
+                    updateJoystickDebug()
+                    sendDriveCommand()
+                    true
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_OUTSIDE -> {
+                    pressedView.alpha = 1f
+                    rotation = 0f
+                    updateJoystickDebug()
+                    sendStopBurst()
+                    true
+                }
+
+                else -> true
+            }
+        }
+    }
+
+    private fun setCameraButtonListener(view: View, y: Float) {
+        view.setOnTouchListener { pressedView, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressedView.alpha = 0.55f
+                    turnY = y
+                    updateJoystickDebug()
+                    sendServo1Angle(joystickYToServoAngle(y), force = true)
+                    true
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_OUTSIDE -> {
+                    pressedView.alpha = 1f
+                    true
+                }
+
+                else -> true
+            }
+        }
     }
 
     private val servoAngleSliderListener = object : SeekBar.OnSeekBarChangeListener {
@@ -499,7 +553,8 @@ class FirstFragment : Fragment() {
 
     private fun showControlUi() {
         binding.driveJoystick.visibility = View.VISIBLE
-        binding.turnJoystick.visibility = View.VISIBLE
+        binding.turnJoystick.visibility = View.GONE
+        binding.rightControls.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
         updateDebugPanelVisibility()

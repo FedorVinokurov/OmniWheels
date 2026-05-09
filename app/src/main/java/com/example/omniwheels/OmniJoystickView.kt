@@ -62,7 +62,7 @@ class OmniJoystickView @JvmOverloads constructor(
         val requested = min(
             MeasureSpec.getSize(widthMeasureSpec),
             MeasureSpec.getSize(heightMeasureSpec)
-        ).coerceAtLeast(260)
+        )
         setMeasuredDimension(requested, requested)
     }
 
@@ -70,8 +70,8 @@ class OmniJoystickView @JvmOverloads constructor(
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val radius = min(width, height) * 0.28f
-        val knobRadius = radius * 0.38f
+        val radius = min(width, height) * 0.42f
+        val knobRadius = radius * 0.4f
 
         canvas.drawCircle(cx, cy, radius, basePaint)
         if (limitToSquare) {

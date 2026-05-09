@@ -21,6 +21,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.SeekBar
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
 import androidx.core.content.ContextCompat
 import com.example.omniwheels.databinding.FragmentFirstBinding
@@ -157,6 +158,10 @@ class FirstFragment : Fragment() {
             sendServo1Angle(joystickYToServoAngle(y))
             sendDriveCommand()
         }
+        binding.cameraUpButton.direction = TriangleButtonView.Direction.UP
+        binding.cameraDownButton.direction = TriangleButtonView.Direction.DOWN
+        binding.sideLeftButton.direction = TriangleButtonView.Direction.LEFT
+        binding.sideRightButton.direction = TriangleButtonView.Direction.RIGHT
         setSideButtonListener(binding.sideLeftButton, -1f)
         setSideButtonListener(binding.sideRightButton, 1f)
         setCameraButtonListener(binding.cameraUpButton, 1f)
@@ -189,6 +194,7 @@ class FirstFragment : Fragment() {
         updateSpeedLabels()
         updateDebugPanelVisibility()
         updateCommandStatus()
+        binding.root.post { applyMockupControlPositions() }
     }
 
     private fun setSideButtonListener(view: View, value: Float) {
@@ -557,7 +563,93 @@ class FirstFragment : Fragment() {
         binding.rightControls.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
+        binding.root.post { applyMockupControlPositions() }
         updateDebugPanelVisibility()
+    }
+
+    private fun applyMockupControlPositions() {
+        val rootWidth = binding.root.width
+        val rootHeight = binding.root.height
+        if (rootWidth <= 0 || rootHeight <= 0) return
+
+        val xScale = rootWidth / 1280f
+        val yScale = rootHeight / 576f
+        val joystickScale = minOf(xScale, yScale)
+
+        placeView(
+            binding.driveJoystick,
+            left = 105.5f * xScale,
+            top = 378.5f * yScale,
+            width = 138f * joystickScale,
+            height = 138f * joystickScale
+        )
+        placeView(
+            binding.cameraUpButton,
+            left = 1091.5f * xScale,
+            top = 113.5f * yScale,
+            width = 90f * xScale,
+            height = 81f * yScale
+        )
+        placeView(
+            binding.cameraDownButton,
+            left = 1091.5f * xScale,
+            top = 250.5f * yScale,
+            width = 90f * xScale,
+            height = 80f * yScale
+        )
+        placeView(
+            binding.sideLeftButton,
+            left = 938.5f * xScale,
+            top = 387.5f * yScale,
+            width = 110f * xScale,
+            height = 124f * yScale
+        )
+        placeView(
+            binding.sideRightButton,
+            left = 1060.5f * xScale,
+            top = 387.5f * yScale,
+            width = 110f * xScale,
+            height = 124f * yScale
+        )
+        placeWrapView(binding.debugToggle, left = 88f * xScale, top = 47f * yScale)
+        placeWrapView(
+            binding.closeApp,
+            left = (640.5f * xScale) - (binding.closeApp.width / 2f),
+            top = 41f * yScale
+        )
+    }
+
+    private fun placeView(view: View, left: Float, top: Float, width: Float, height: Float) {
+        val params = (view.layoutParams as? ConstraintLayout.LayoutParams)
+            ?: ConstraintLayout.LayoutParams(width.roundToInt(), height.roundToInt())
+        params.width = width.roundToInt().coerceAtLeast(1)
+        params.height = height.roundToInt().coerceAtLeast(1)
+        params.leftMargin = left.roundToInt()
+        params.topMargin = top.roundToInt()
+        params.rightMargin = 0
+        params.bottomMargin = 0
+        params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+        params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+        params.endToEnd = ConstraintLayout.LayoutParams.UNSET
+        params.endToStart = ConstraintLayout.LayoutParams.UNSET
+        params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+        params.bottomToTop = ConstraintLayout.LayoutParams.UNSET
+        params.topToBottom = ConstraintLayout.LayoutParams.UNSET
+        view.layoutParams = params
+    }
+
+    private fun placeWrapView(view: View, left: Float, top: Float) {
+        val params = (view.layoutParams as? ConstraintLayout.LayoutParams) ?: return
+        params.leftMargin = left.roundToInt()
+        params.topMargin = top.roundToInt()
+        params.rightMargin = 0
+        params.bottomMargin = 0
+        params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+        params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+        params.endToEnd = ConstraintLayout.LayoutParams.UNSET
+        params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+        params.topToBottom = ConstraintLayout.LayoutParams.UNSET
+        view.layoutParams = params
     }
 
     private fun initAgora() {

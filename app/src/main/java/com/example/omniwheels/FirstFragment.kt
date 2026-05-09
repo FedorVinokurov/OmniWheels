@@ -102,6 +102,7 @@ class FirstFragment : Fragment() {
     private var turnSpeedLimit = 180
     private var turnButtonSpeed = DEFAULT_TURN_BUTTON_SPEED
     private var turnButtonDurationMs = DEFAULT_TURN_BUTTON_DURATION_MS
+    private var turnButtonRunnable: Runnable? = null
 
     private var connectionStatus = "BT: нет"
     private var commandTxStatus = "TX: нет"
@@ -134,7 +135,7 @@ class FirstFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        binding.driveJoystick.snapToCardinal = true
+        binding.driveJoystick.snapToCardinal = false
         binding.driveJoystick.releaseListener = {
             joyX = 0f
             joyY = 0f
@@ -326,18 +327,10 @@ class FirstFragment : Fragment() {
     }
 
     private fun sendDriveCommand() {
-        val leftJoystickActive = abs(joyX) >= MOTOR_DIRECTION_DEAD_ZONE ||
-            abs(joyY) >= MOTOR_DIRECTION_DEAD_ZONE
-        val speeds = if (leftJoystickActive && abs(joyY) >= abs(joyX)) {
-            val speed = signedAxisSpeed(joyY, forwardSpeedLimit)
-            intArrayOf(speed, speed, speed, speed)
-        } else if (leftJoystickActive) {
-            val speed = signedAxisSpeed(joyX, turnSpeedLimit)
-            intArrayOf(speed, -speed, -speed, speed)
-        } else {
-            val speed = analogAxisSpeed(rotation, sideSpeedLimit)
-            intArrayOf(speed, -speed, speed, -speed)
-        }
+        val forward = analogAxisSpeed(joyY, forwardSpeedLimit)
+        val rotate = analogAxisSpeed(joyX, turnSpeedLimit)
+        val strafe = analogAxisSpeed(rotation, sideSpeedLimit)
+        val speeds = mixedMotorSpeeds(forward, rotate, strafe)
 
         desiredMotorSpeeds = speeds
         updateDesiredMotorDebug()
@@ -354,10 +347,21 @@ class FirstFragment : Fragment() {
         return (value.coerceIn(-1f, 1f) * speedLimit).roundToInt()
     }
 
+    private fun mixedMotorSpeeds(forward: Int, rotate: Int, strafe: Int): IntArray {
+        return intArrayOf(
+            forward + rotate + strafe,
+            forward - rotate - strafe,
+            forward + rotate - strafe,
+            forward - rotate + strafe
+        ).map { it.coerceIn(-FULL_PWM, FULL_PWM) }.toIntArray()
+    }
+
     private fun sendStopBurst() {
         joyX = 0f
         joyY = 0f
         rotation = 0f
+        turnButtonRunnable?.let { mainHandler.removeCallbacks(it) }
+        turnButtonRunnable = null
         lastReleaseAt = SystemClock.uptimeMillis()
         updateJoystickDebug()
         updateReleaseDebug()
@@ -390,15 +394,12 @@ class FirstFragment : Fragment() {
     }
 
     private fun sendTurnCommand(speed: Int, durationMs: Long) {
-        joyX = 0f
-        joyY = 0f
-        rotation = 0f
-        desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
-        mainHandler.removeCallbacks(motorSendRunnable)
-        motorSendScheduled = false
-        lastMotorCommand = ""
-        updateJoystickDebug()
-        updateDesiredMotorDebug()
+        val driveActive = abs(joyX) >= MOTOR_DIRECTION_DEAD_ZONE ||
+            abs(joyY) >= MOTOR_DIRECTION_DEAD_ZONE
+        if (driveActive) {
+            sendTimedDriveTurn(speed, durationMs)
+            return
+        }
 
         val command = "TURN ${speed.coerceIn(-FULL_PWM, FULL_PWM)} ${durationMs.coerceAtLeast(0L)}\n"
         if (controllerMode) {
@@ -406,6 +407,30 @@ class FirstFragment : Fragment() {
         } else {
             writeCommand(command, force = true)
         }
+    }
+
+    private fun sendTimedDriveTurn(speed: Int, durationMs: Long) {
+        turnButtonRunnable?.let { mainHandler.removeCallbacks(it) }
+        mainHandler.removeCallbacks(motorSendRunnable)
+        motorSendScheduled = false
+
+        val forward = analogAxisSpeed(joyY, forwardSpeedLimit)
+        val joystickRotate = analogAxisSpeed(joyX, turnSpeedLimit)
+        val buttonRotate = speed.coerceIn(-FULL_PWM, FULL_PWM)
+        val strafe = analogAxisSpeed(rotation, sideSpeedLimit)
+        val speeds = mixedMotorSpeeds(forward, joystickRotate + buttonRotate, strafe)
+
+        desiredMotorSpeeds = speeds
+        updateDesiredMotorDebug()
+        sendMotorCommand(speeds, force = true)
+
+        val restore = Runnable {
+            turnButtonRunnable = null
+            lastMotorCommand = ""
+            sendDriveCommand()
+        }
+        turnButtonRunnable = restore
+        mainHandler.postDelayed(restore, durationMs.coerceAtLeast(0L))
     }
 
     private fun queueMotorSend() {

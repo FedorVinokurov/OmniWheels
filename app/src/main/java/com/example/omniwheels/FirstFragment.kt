@@ -56,6 +56,9 @@ private const val SERVO_STEP = 2
 private const val MOTOR_THROTTLE_MS = 100L
 private const val MOTOR_DIRECTION_DEAD_ZONE = 0.25f
 private const val FULL_PWM = 255
+private const val DEFAULT_TURN_BUTTON_SPEED = 223
+private const val DEFAULT_TURN_BUTTON_DURATION_MS = 100
+private const val MAX_TURN_BUTTON_DURATION_MS = 3000
 
 private const val AGORA_CHANNEL = "robot-room"
 private const val AGORA_APP_ID = "41f7f4e1a4bd4cda9efe3fc3696e86ae"
@@ -74,6 +77,7 @@ class FirstFragment : Fragment() {
     private var serialConnection: UsbSerialConnection? = null
     private var rtcEngine: RtcEngine? = null
     private var commandStreamId: Int? = null
+    private var pendingAgoraStart = false
 
     @Volatile private var controllerMode = false
     private var localJoystickMode = false
@@ -94,8 +98,10 @@ class FirstFragment : Fragment() {
     private var desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
     private var motorSendScheduled = false
     private var forwardSpeedLimit = 120
-    private var sideSpeedLimit = 136
+    private var sideSpeedLimit = 255
     private var turnSpeedLimit = 180
+    private var turnButtonSpeed = DEFAULT_TURN_BUTTON_SPEED
+    private var turnButtonDurationMs = DEFAULT_TURN_BUTTON_DURATION_MS
 
     private var connectionStatus = "BT: нет"
     private var commandTxStatus = "TX: нет"
@@ -162,8 +168,8 @@ class FirstFragment : Fragment() {
         binding.cameraDownButton.direction = TriangleButtonView.Direction.DOWN
         binding.sideLeftButton.direction = TriangleButtonView.Direction.LEFT
         binding.sideRightButton.direction = TriangleButtonView.Direction.RIGHT
-        setSideButtonListener(binding.sideLeftButton, -1f)
-        setSideButtonListener(binding.sideRightButton, 1f)
+        setTurnButtonListener(binding.sideLeftButton, -1)
+        setTurnButtonListener(binding.sideRightButton, 1)
         setCameraButtonListener(binding.cameraUpButton, 1f)
         setCameraButtonListener(binding.cameraDownButton, -1f)
 
@@ -180,6 +186,12 @@ class FirstFragment : Fragment() {
         binding.turnSpeedSlider.max = FULL_PWM
         binding.turnSpeedSlider.progress = turnSpeedLimit
         binding.turnSpeedSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
+        binding.turnButtonSpeedSlider.max = FULL_PWM
+        binding.turnButtonSpeedSlider.progress = turnButtonSpeed
+        binding.turnButtonSpeedSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
+        binding.turnButtonDurationSlider.max = MAX_TURN_BUTTON_DURATION_MS
+        binding.turnButtonDurationSlider.progress = turnButtonDurationMs
+        binding.turnButtonDurationSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
 
         binding.modeCamera.setOnClickListener { configureRole(controller = false) }
         binding.modeScreen.setOnClickListener { configureRole(controller = true) }
@@ -215,6 +227,27 @@ class FirstFragment : Fragment() {
                     rotation = 0f
                     updateJoystickDebug()
                     sendStopBurst()
+                    true
+                }
+
+                else -> true
+            }
+        }
+    }
+
+    private fun setTurnButtonListener(view: View, direction: Int) {
+        view.setOnTouchListener { pressedView, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressedView.alpha = 0.55f
+                    sendTurnCommand(direction * turnButtonSpeed, turnButtonDurationMs.toLong())
+                    true
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_OUTSIDE -> {
+                    pressedView.alpha = 1f
                     true
                 }
 
@@ -356,6 +389,25 @@ class FirstFragment : Fragment() {
         }
     }
 
+    private fun sendTurnCommand(speed: Int, durationMs: Long) {
+        joyX = 0f
+        joyY = 0f
+        rotation = 0f
+        desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
+        mainHandler.removeCallbacks(motorSendRunnable)
+        motorSendScheduled = false
+        lastMotorCommand = ""
+        updateJoystickDebug()
+        updateDesiredMotorDebug()
+
+        val command = "TURN ${speed.coerceIn(-FULL_PWM, FULL_PWM)} ${durationMs.coerceAtLeast(0L)}\n"
+        if (controllerMode) {
+            sendCommandOverAgora(command)
+        } else {
+            writeCommand(command, force = true)
+        }
+    }
+
     private fun queueMotorSend() {
         if (motorSendScheduled) return
         val elapsed = SystemClock.uptimeMillis() - lastMotorSentAt
@@ -439,8 +491,10 @@ class FirstFragment : Fragment() {
 
     private fun updateSpeedLabels() {
         binding.forwardSpeedValue.text = "Forward: $forwardSpeedLimit"
-        binding.sideSpeedValue.text = "Turn: $sideSpeedLimit"
-        binding.turnSpeedValue.text = "Side: $turnSpeedLimit"
+        binding.sideSpeedValue.text = "Left/right: $sideSpeedLimit"
+        binding.turnSpeedValue.text = "Rotate: $turnSpeedLimit"
+        binding.turnButtonSpeedValue.text = "Button turn speed: $turnButtonSpeed"
+        binding.turnButtonDurationValue.text = "Button turn time: $turnButtonDurationMs ms"
     }
 
     private fun updateDebugPanelVisibility() {
@@ -505,6 +559,9 @@ class FirstFragment : Fragment() {
             R.id.forward_speed_slider -> forwardSpeedLimit = value
             R.id.side_speed_slider -> sideSpeedLimit = value
             R.id.turn_speed_slider -> turnSpeedLimit = value
+            R.id.turn_button_speed_slider -> turnButtonSpeed = value
+            R.id.turn_button_duration_slider -> turnButtonDurationMs =
+                progress.coerceIn(0, MAX_TURN_BUTTON_DURATION_MS)
         }
         updateSpeedLabels()
     }
@@ -544,7 +601,7 @@ class FirstFragment : Fragment() {
             connectBluetooth()
         }
         updateDebugPanelVisibility()
-        initAgora()
+        startAgoraWhenReady()
     }
 
     private fun configureJoystickMode() {
@@ -567,6 +624,26 @@ class FirstFragment : Fragment() {
         updateDebugPanelVisibility()
     }
 
+    private fun startAgoraWhenReady() {
+        if (!controllerMode && !hasMediaPermissions()) {
+            pendingAgoraStart = true
+            requestPermissions(mediaPermissions(), CAMERA_PERMISSION_REQUEST)
+            return
+        }
+        pendingAgoraStart = false
+        initAgora()
+    }
+
+    private fun hasMediaPermissions(): Boolean {
+        return mediaPermissions().all {
+            ContextCompat.checkSelfPermission(requireContext(), it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun mediaPermissions(): Array<String> {
+        return arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+    }
+
     private fun applyMockupControlPositions() {
         val rootWidth = binding.root.width
         val rootHeight = binding.root.height
@@ -578,44 +655,52 @@ class FirstFragment : Fragment() {
 
         placeView(
             binding.driveJoystick,
-            left = 105.5f * xScale,
-            top = 378.5f * yScale,
-            width = 138f * joystickScale,
-            height = 138f * joystickScale
+            left = 114f * xScale,
+            top = 384f * yScale,
+            width = 122f * joystickScale,
+            height = 128f * joystickScale
         )
         placeView(
             binding.cameraUpButton,
-            left = 1091.5f * xScale,
-            top = 113.5f * yScale,
-            width = 90f * xScale,
-            height = 81f * yScale
+            left = 1093f * xScale,
+            top = 115f * yScale,
+            width = 88f * xScale,
+            height = 79f * yScale
         )
         placeView(
             binding.cameraDownButton,
-            left = 1091.5f * xScale,
-            top = 250.5f * yScale,
-            width = 90f * xScale,
-            height = 80f * yScale
+            left = 1096f * xScale,
+            top = 248f * yScale,
+            width = 83f * xScale,
+            height = 85f * yScale
         )
         placeView(
             binding.sideLeftButton,
-            left = 938.5f * xScale,
-            top = 387.5f * yScale,
-            width = 110f * xScale,
-            height = 124f * yScale
+            left = 936f * xScale,
+            top = 392f * yScale,
+            width = 112f * xScale,
+            height = 120f * yScale
         )
         placeView(
             binding.sideRightButton,
-            left = 1060.5f * xScale,
-            top = 387.5f * yScale,
-            width = 110f * xScale,
-            height = 124f * yScale
+            left = 1065f * xScale,
+            top = 392f * yScale,
+            width = 103f * xScale,
+            height = 120f * yScale
         )
-        placeWrapView(binding.debugToggle, left = 88f * xScale, top = 47f * yScale)
-        placeWrapView(
+        placeView(
+            binding.debugToggle,
+            left = 74f * xScale,
+            top = 26f * yScale,
+            width = 72f * xScale,
+            height = 56f * yScale
+        )
+        placeView(
             binding.closeApp,
-            left = (640.5f * xScale) - (binding.closeApp.width / 2f),
-            top = 41f * yScale
+            left = 606f * xScale,
+            top = 38f * yScale,
+            width = 72f * xScale,
+            height = 56f * yScale
         )
     }
 
@@ -703,6 +788,24 @@ class FirstFragment : Fragment() {
                     sendServo1Angle(servo1Angle, force = true)
                 }
             } catch (e: Exception) { mainHandler.post { connectionStatus = "BT: Ошибка" } }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != CAMERA_PERMISSION_REQUEST) return
+
+        val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        if (granted && pendingAgoraStart) {
+            startAgoraWhenReady()
+        } else {
+            pendingAgoraStart = false
+            commandTxStatus = "CAM: permission denied"
+            updateCommandStatus()
         }
     }
 

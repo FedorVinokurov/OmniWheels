@@ -24,13 +24,16 @@ const int SERVO_MAX_ANGLE = 180;
 const int SERVO_STEP_DEGREES = 3;
 const unsigned long SERVO_UPDATE_INTERVAL_MS = 10;
 const unsigned long MOTOR_WATCHDOG_TIMEOUT_MS = 500;
+const unsigned long TURN_MAX_DURATION_MS = 5000;
 
 int servoCurrentAngle = 90;
 int servoTargetAngle = 90;
 unsigned long lastServoUpdateMs = 0;
 unsigned long lastMotorDebugMs = 0;
 unsigned long lastMotorCommandMs = 0;
+unsigned long turnStopAtMs = 0;
 bool motorsRunning = false;
+bool turnActive = false;
 
 char serialBuffer[48];
 byte serialIndex = 0;
@@ -50,6 +53,7 @@ void setup() {
 
 void loop() {
   readCommands();
+  updateTurn();
   updateMotorWatchdog();
   updateServo();
 }
@@ -87,6 +91,7 @@ void handleCommand(char *command) {
   if (command[0] == '\0') return;
 
   if (strcmp(command, "STOP") == 0) {
+    turnActive = false;
     stopAll();
     lastMotorCommandMs = millis();
     Serial.println("RX STOP");
@@ -94,7 +99,13 @@ void handleCommand(char *command) {
   }
 
   if (command[0] == 'M' && command[1] == ' ') {
+    turnActive = false;
     handleMotorCommand(command + 2);
+    return;
+  }
+
+  if (strncmp(command, "TURN ", 5) == 0) {
+    handleTurnCommand(command + 5);
     return;
   }
 
@@ -105,6 +116,38 @@ void handleCommand(char *command) {
 
   Serial.print("ERR ");
   Serial.println(command);
+}
+
+void handleTurnCommand(char *args) {
+  char *speedToken = strtok(args, " ");
+  char *durationToken = strtok(NULL, " ");
+  if (speedToken == NULL || durationToken == NULL) {
+    Serial.println("ERR TURN");
+    return;
+  }
+
+  int speed = constrain(atoi(speedToken), -255, 255);
+  long requestedDurationMs = atol(durationToken);
+  unsigned long durationMs = 0;
+  if (requestedDurationMs > 0) {
+    durationMs = min((unsigned long)requestedDurationMs, TURN_MAX_DURATION_MS);
+  }
+  if (speed == 0 || durationMs == 0) {
+    turnActive = false;
+    stopAll();
+    Serial.println("ACK TURN 0");
+    return;
+  }
+
+  setTurnMotors(speed);
+  turnStopAtMs = millis() + durationMs;
+  turnActive = true;
+  motorsRunning = true;
+
+  Serial.print("ACK TURN ");
+  Serial.print(speed);
+  Serial.print(' ');
+  Serial.println(durationMs);
 }
 
 void handleMotorCommand(char *args) {
@@ -180,12 +223,29 @@ void updateServo() {
   servo1.write(servoCurrentAngle);
 }
 
+void updateTurn() {
+  if (!turnActive) return;
+  if ((long)(millis() - turnStopAtMs) >= 0) {
+    turnActive = false;
+    stopAll();
+    Serial.println("RX TURN DONE");
+  }
+}
+
 void updateMotorWatchdog() {
+  if (turnActive) return;
   if (!motorsRunning) return;
   if (millis() - lastMotorCommandMs > MOTOR_WATCHDOG_TIMEOUT_MS) {
     stopAll();
     Serial.println("RX WATCHDOG STOP");
   }
+}
+
+void setTurnMotors(int speed) {
+  setMotor(frontLeft, -speed);
+  setMotor(frontRight, -speed);
+  setMotor(rearLeft, speed);
+  setMotor(rearRight, speed);
 }
 
 void setMotor(AF_DCMotor &motor, int speed) {

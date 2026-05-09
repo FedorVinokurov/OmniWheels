@@ -27,10 +27,10 @@
 
     <com.example.omniwheels.OmniJoystickView
         android:id="@+id/drive_joystick"
-        android:layout_width="138dp"
-        android:layout_height="138dp"
-        android:layout_marginStart="106dp"
-        android:layout_marginBottom="60dp"
+        android:layout_width="122dp"
+        android:layout_height="128dp"
+        android:layout_marginStart="114dp"
+        android:layout_marginBottom="64dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
@@ -54,36 +54,36 @@
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/camera_up_button"
-            android:layout_width="90dp"
-            android:layout_height="81dp"
-            android:layout_marginEnd="98dp"
-            android:layout_marginBottom="381dp"
+            android:layout_width="88dp"
+            android:layout_height="79dp"
+            android:layout_marginEnd="99dp"
+            android:layout_marginBottom="382dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/camera_down_button"
-            android:layout_width="90dp"
-            android:layout_height="80dp"
-            android:layout_marginEnd="98dp"
-            android:layout_marginBottom="245dp"
+            android:layout_width="83dp"
+            android:layout_height="85dp"
+            android:layout_marginEnd="101dp"
+            android:layout_marginBottom="243dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/side_left_button"
-            android:layout_width="110dp"
-            android:layout_height="124dp"
-            android:layout_marginEnd="231dp"
+            android:layout_width="112dp"
+            android:layout_height="120dp"
+            android:layout_marginEnd="232dp"
             android:layout_marginBottom="64dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/side_right_button"
-            android:layout_width="110dp"
-            android:layout_height="124dp"
-            android:layout_marginEnd="109dp"
+            android:layout_width="103dp"
+            android:layout_height="120dp"
+            android:layout_marginEnd="112dp"
             android:layout_marginBottom="64dp"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
@@ -91,33 +91,36 @@
 
     <LinearLayout
         android:id="@+id/speed_controls"
-        android:layout_width="360dp"
+        android:layout_width="240dp"
         android:layout_height="wrap_content"
+        android:layout_marginTop="88dp"
         android:layout_marginBottom="12dp"
         android:background="#99000000"
         android:gravity="center"
         android:orientation="vertical"
-        android:padding="8dp"
+        android:padding="4dp"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/right_controls"
-        app:layout_constraintStart_toEndOf="@id/drive_joystick">
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="1">
 
         <TextView
             android:id="@+id/forward_speed_value"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="#99000000"
-            android:padding="6dp"
+            android:padding="3dp"
             android:text="Forward: 120"
             android:textColor="@color/white"
-            android:textSize="16sp"
+            android:textSize="10sp"
             android:textStyle="bold" />
 
         <SeekBar
             android:id="@+id/forward_speed_slider"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="26dp"
             android:max="255"
             android:progress="120" />
 
@@ -126,36 +129,72 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="#99000000"
-            android:padding="6dp"
-            android:text="Turn: 136"
+            android:padding="3dp"
+            android:text="Left/right: 255"
             android:textColor="@color/white"
-            android:textSize="16sp"
+            android:textSize="10sp"
             android:textStyle="bold" />
 
         <SeekBar
             android:id="@+id/side_speed_slider"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="26dp"
             android:max="255"
-            android:progress="136" />
+            android:progress="255" />
 
         <TextView
             android:id="@+id/turn_speed_value"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="#99000000"
-            android:padding="6dp"
-            android:text="Side: 180"
+            android:padding="3dp"
+            android:text="Rotate: 180"
             android:textColor="@color/white"
-            android:textSize="16sp"
+            android:textSize="10sp"
             android:textStyle="bold" />
 
         <SeekBar
             android:id="@+id/turn_speed_slider"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="26dp"
             android:max="255"
             android:progress="180" />
+
+        <TextView
+            android:id="@+id/turn_button_speed_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#99000000"
+            android:padding="3dp"
+            android:text="Button turn speed: 223"
+            android:textColor="@color/white"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/turn_button_speed_slider"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:max="255"
+            android:progress="223" />
+
+        <TextView
+            android:id="@+id/turn_button_duration_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#99000000"
+            android:padding="3dp"
+            android:text="Button turn time: 100 ms"
+            android:textColor="@color/white"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/turn_button_duration_slider"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:max="3000"
+            android:progress="100" />
     </LinearLayout>
 
     <LinearLayout
@@ -195,20 +234,21 @@
         app:layout_constraintStart_toStartOf="@id/servo_controls"
         app:layout_constraintTop_toBottomOf="@id/servo_controls" />
 
-    <TextView
+    <FrameLayout
         android:id="@+id/debug_toggle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="88dp"
-        android:layout_marginTop="47dp"
-        android:gravity="center"
-        android:includeFontPadding="false"
-        android:text="DBG"
-        android:textColor="@color/white"
-        android:textSize="14sp"
-        android:textStyle="bold"
+        android:layout_width="72dp"
+        android:layout_height="56dp"
+        android:layout_marginStart="74dp"
+        android:layout_marginTop="26dp"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="parent">
+
+        <View
+            android:layout_width="47dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:background="@drawable/ui_dbg" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/command_status"
@@ -262,19 +302,19 @@
             android:text="Joystick" />
     </LinearLayout>
 
-    <TextView
+    <FrameLayout
         android:id="@+id/close_app"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_marginTop="41dp"
-        android:gravity="center"
-        android:includeFontPadding="false"
-        android:scaleY="0.8"
-        android:text="X"
-        android:textColor="@color/white"
-        android:textSize="36sp"
-        android:textStyle="bold"
+        android:layout_width="72dp"
+        android:layout_height="56dp"
+        android:layout_marginTop="38dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="parent">
+
+        <View
+            android:layout_width="44dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:background="@drawable/ui_close" />
+    </FrameLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>

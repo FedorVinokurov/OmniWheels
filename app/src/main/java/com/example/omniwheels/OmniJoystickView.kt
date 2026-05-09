@@ -1,9 +1,12 @@
 package com.example.omniwheels
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -51,6 +54,13 @@ class OmniJoystickView @JvmOverloads constructor(
         style = Paint.Style.FILL
         color = Color.WHITE
     }
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val joystickRingBitmap: Bitmap? by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.ui_joystick_ring)
+    }
+    private val joystickKnobBitmap: Bitmap? by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.ui_joystick_knob)
+    }
 
     private var knobX = 0f
     private var knobY = 0f
@@ -59,11 +69,10 @@ class OmniJoystickView @JvmOverloads constructor(
     private var lastSentY = 0f
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val requested = min(
+        setMeasuredDimension(
             MeasureSpec.getSize(widthMeasureSpec),
             MeasureSpec.getSize(heightMeasureSpec)
         )
-        setMeasuredDimension(requested, requested)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -73,11 +82,16 @@ class OmniJoystickView @JvmOverloads constructor(
         val radius = min(width, height) * 0.42f
         val knobRadius = radius * 0.4f
 
-        canvas.drawCircle(cx, cy, radius, basePaint)
-        if (limitToSquare) {
-            canvas.drawRect(cx - radius, cy - radius, cx + radius, cy + radius, ringPaint)
+        val ringBitmap = joystickRingBitmap
+        if (ringBitmap != null && !limitToSquare) {
+            canvas.drawBitmap(ringBitmap, null, RectF(0f, 0f, width.toFloat(), height.toFloat()), bitmapPaint)
         } else {
-            canvas.drawCircle(cx, cy, radius, ringPaint)
+            canvas.drawCircle(cx, cy, radius, basePaint)
+            if (limitToSquare) {
+                canvas.drawRect(cx - radius, cy - radius, cx + radius, cy + radius, ringPaint)
+            } else {
+                canvas.drawCircle(cx, cy, radius, ringPaint)
+            }
         }
 
         val hx = cx + knobX * radius
@@ -85,7 +99,17 @@ class OmniJoystickView @JvmOverloads constructor(
         if (knobX != 0f || knobY != 0f) {
             canvas.drawLine(cx, cy, hx, hy, axisPaint)
         }
-        canvas.drawCircle(hx, hy, knobRadius, handlePaint)
+        val knobBitmap = joystickKnobBitmap
+        if (knobBitmap != null) {
+            canvas.drawBitmap(
+                knobBitmap,
+                null,
+                RectF(hx - knobRadius, hy - knobRadius, hx + knobRadius, hy + knobRadius),
+                bitmapPaint
+            )
+        } else {
+            canvas.drawCircle(hx, hy, knobRadius, handlePaint)
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

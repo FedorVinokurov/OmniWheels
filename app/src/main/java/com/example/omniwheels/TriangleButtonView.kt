@@ -1,10 +1,13 @@
 package com.example.omniwheels
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 
@@ -33,9 +36,33 @@ class TriangleButtonView @JvmOverloads constructor(
     }
 
     private val path = Path()
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val cameraUpBitmap: Bitmap? by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.ui_camera_up)
+    }
+    private val cameraDownBitmap: Bitmap? by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.ui_camera_down)
+    }
+    private val sideLeftBitmap: Bitmap? by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.ui_side_left)
+    }
+    private val sideRightBitmap: Bitmap? by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.ui_side_right)
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val bitmap = when (direction) {
+            Direction.UP -> cameraUpBitmap
+            Direction.DOWN -> cameraDownBitmap
+            Direction.LEFT -> sideLeftBitmap
+            Direction.RIGHT -> sideRightBitmap
+        }
+        if (bitmap != null) {
+            canvas.drawBitmap(bitmap, null, RectF(0f, 0f, width.toFloat(), height.toFloat()), bitmapPaint)
+            return
+        }
+
         val inset = paint.strokeWidth * 2f
         path.reset()
 

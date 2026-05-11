@@ -59,6 +59,8 @@ private const val FULL_PWM = 255
 private const val DEFAULT_TURN_BUTTON_SPEED = 223
 private const val DEFAULT_TURN_BUTTON_DURATION_MS = 100
 private const val MAX_TURN_BUTTON_DURATION_MS = 3000
+private const val MOCKUP_WIDTH = 1280f
+private const val MOCKUP_HEIGHT = 576f
 
 private const val AGORA_CHANNEL = "robot-room"
 private const val AGORA_APP_ID = "41f7f4e1a4bd4cda9efe3fc3696e86ae"
@@ -146,6 +148,8 @@ class FirstFragment : Fragment() {
             updateJoystickDebug()
             sendDriveCommand()
         }
+        setDriveButtonListener(binding.driveForwardButton, 1f)
+        setDriveButtonListener(binding.driveBackwardButton, -1f)
 
         binding.turnJoystick.limitToSquare = true
         binding.turnJoystick.snapYOnly = true
@@ -194,8 +198,8 @@ class FirstFragment : Fragment() {
         binding.turnButtonDurationSlider.progress = turnButtonDurationMs
         binding.turnButtonDurationSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
 
-        binding.modeCamera.setOnClickListener { configureRole(controller = false) }
-        binding.modeScreen.setOnClickListener { configureRole(controller = true) }
+        binding.modeCamera.setOnClickListener { configureCameraMode() }
+        binding.startScreenLogo.setOnClickListener { configureRole(controller = true) }
         binding.modeJoystick.setOnClickListener { configureJoystickMode() }
         binding.debugToggle.setOnClickListener {
             debugPanelVisible = !debugPanelVisible
@@ -249,6 +253,34 @@ class FirstFragment : Fragment() {
                 MotionEvent.ACTION_CANCEL,
                 MotionEvent.ACTION_OUTSIDE -> {
                     pressedView.alpha = 1f
+                    true
+                }
+
+                else -> true
+            }
+        }
+    }
+
+    private fun setDriveButtonListener(view: View, y: Float) {
+        view.setOnTouchListener { pressedView, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressedView.alpha = 0.55f
+                    joyX = 0f
+                    joyY = y
+                    updateJoystickDebug()
+                    sendDriveCommand()
+                    true
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_OUTSIDE -> {
+                    pressedView.alpha = 1f
+                    joyX = 0f
+                    joyY = 0f
+                    updateJoystickDebug()
+                    sendStopBurst()
                     true
                 }
 
@@ -526,7 +558,7 @@ class FirstFragment : Fragment() {
         val visible = if (debugPanelVisible) View.VISIBLE else View.GONE
         binding.commandStatus.visibility = visible
         binding.speedControls.visibility =
-            if (debugPanelVisible && binding.driveJoystick.visibility == View.VISIBLE) View.VISIBLE else View.GONE
+            if (debugPanelVisible && binding.driveForwardButton.visibility == View.VISIBLE) View.VISIBLE else View.GONE
     }
 
     private fun updateJoystickDebug() {
@@ -629,6 +661,16 @@ class FirstFragment : Fragment() {
         startAgoraWhenReady()
     }
 
+    private fun configureCameraMode() {
+        controllerMode = false
+        localJoystickMode = false
+        binding.modeOverlay.visibility = View.GONE
+        showControlUi()
+        binding.agoraVideoContainer.removeAllViews()
+        updateDebugPanelVisibility()
+        startAgoraWhenReady()
+    }
+
     private fun configureJoystickMode() {
         controllerMode = false
         localJoystickMode = true
@@ -640,13 +682,31 @@ class FirstFragment : Fragment() {
     }
 
     private fun showControlUi() {
-        binding.driveJoystick.visibility = View.VISIBLE
+        binding.driveJoystick.visibility = View.GONE
+        binding.driveForwardButton.visibility = View.VISIBLE
+        binding.driveBackwardButton.visibility = View.VISIBLE
         binding.turnJoystick.visibility = View.GONE
         binding.rightControls.visibility = View.VISIBLE
+        binding.debugToggle.visibility = View.GONE
+        binding.closeApp.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
         binding.root.post { applyMockupControlPositions() }
         updateDebugPanelVisibility()
+    }
+
+    private fun hideControlUi() {
+        binding.driveJoystick.visibility = View.GONE
+        binding.driveForwardButton.visibility = View.GONE
+        binding.driveBackwardButton.visibility = View.GONE
+        binding.turnJoystick.visibility = View.GONE
+        binding.rightControls.visibility = View.GONE
+        binding.speedControls.visibility = View.GONE
+        binding.servoControls.visibility = View.GONE
+        binding.servoAngleValue.visibility = View.GONE
+        binding.debugToggle.visibility = View.GONE
+        binding.commandStatus.visibility = View.GONE
+        binding.closeApp.visibility = View.GONE
     }
 
     private fun startAgoraWhenReady() {
@@ -674,59 +734,197 @@ class FirstFragment : Fragment() {
         val rootHeight = binding.root.height
         if (rootWidth <= 0 || rootHeight <= 0) return
 
-        val xScale = rootWidth / 1280f
-        val yScale = rootHeight / 576f
-        val joystickScale = minOf(xScale, yScale)
+        val scale = rootHeight / MOCKUP_HEIGHT
 
-        placeView(
+        placeAnchoredView(
             binding.driveJoystick,
-            left = 114f * xScale,
-            top = 384f * yScale,
-            width = 122f * joystickScale,
-            height = 128f * joystickScale
+            x = 114f,
+            y = 384f,
+            width = 122f,
+            height = 128f,
+            anchor = MockupAnchor.LEFT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
-        placeView(
+        placeAnchoredView(
+            binding.driveForwardButton,
+            x = 100f,
+            y = 297f,
+            width = 142f,
+            height = 123f,
+            anchor = MockupAnchor.LEFT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
+        )
+        placeAnchoredView(
+            binding.driveBackwardButton,
+            x = 101f,
+            y = 426f,
+            width = 138f,
+            height = 114f,
+            anchor = MockupAnchor.LEFT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
+        )
+        placeAnchoredView(
             binding.cameraUpButton,
-            left = 1093f * xScale,
-            top = 115f * yScale,
-            width = 88f * xScale,
-            height = 79f * yScale
+            x = 1082f,
+            y = 105f,
+            width = 110f,
+            height = 100f,
+            anchor = MockupAnchor.RIGHT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
-        placeView(
+        placeAnchoredView(
             binding.cameraDownButton,
-            left = 1096f * xScale,
-            top = 248f * yScale,
-            width = 83f * xScale,
-            height = 85f * yScale
+            x = 1081f,
+            y = 245f,
+            width = 106f,
+            height = 93f,
+            anchor = MockupAnchor.RIGHT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
-        placeView(
+        placeAnchoredView(
             binding.sideLeftButton,
-            left = 936f * xScale,
-            top = 392f * yScale,
-            width = 112f * xScale,
-            height = 120f * yScale
+            x = 926f,
+            y = 384f,
+            width = 126f,
+            height = 133f,
+            anchor = MockupAnchor.RIGHT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
-        placeView(
+        placeAnchoredView(
             binding.sideRightButton,
-            left = 1065f * xScale,
-            top = 392f * yScale,
-            width = 103f * xScale,
-            height = 120f * yScale
+            x = 1061f,
+            y = 383f,
+            width = 113f,
+            height = 136f,
+            anchor = MockupAnchor.RIGHT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
-        placeView(
+        placeAnchoredView(
             binding.debugToggle,
-            left = 74f * xScale,
-            top = 26f * yScale,
-            width = 72f * xScale,
-            height = 56f * yScale
+            x = 71f,
+            y = 26f,
+            width = 72f,
+            height = 56f,
+            anchor = MockupAnchor.LEFT_TOP,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
-        placeView(
+        placeAnchoredView(
             binding.closeApp,
-            left = 606f * xScale,
-            top = 38f * yScale,
-            width = 72f * xScale,
-            height = 56f * yScale
+            x = 34f,
+            y = 20f,
+            width = 72f,
+            height = 72f,
+            anchor = MockupAnchor.LEFT_BOTTOM,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
         )
+        placeAnchoredView(
+            binding.modeCamera,
+            x = 29f,
+            y = 27f,
+            width = 161f,
+            height = 74f,
+            anchor = MockupAnchor.LEFT_TOP,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
+        )
+        placeAnchoredView(
+            binding.modeJoystick,
+            x = 193f,
+            y = 28f,
+            width = 181f,
+            height = 72f,
+            anchor = MockupAnchor.LEFT_TOP,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
+        )
+        placeAnchoredView(
+            binding.startScreenLogo,
+            x = 507f,
+            y = 195f,
+            width = 270f,
+            height = 186f,
+            anchor = MockupAnchor.CENTER,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale
+        )
+    }
+
+    private enum class MockupAnchor {
+        LEFT_TOP,
+        LEFT_BOTTOM,
+        RIGHT_BOTTOM,
+        CENTER_TOP,
+        CENTER
+    }
+
+    private fun placeAnchoredView(
+        view: View,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        anchor: MockupAnchor,
+        rootWidth: Int,
+        rootHeight: Int,
+        scale: Float
+    ) {
+        val scaledWidth = width * scale
+        val scaledHeight = height * scale
+        val left: Float
+        val top: Float
+
+        when (anchor) {
+            MockupAnchor.LEFT_TOP -> {
+                left = x * scale
+                top = y * scale
+            }
+
+            MockupAnchor.LEFT_BOTTOM -> {
+                left = x * scale
+                top = rootHeight - (MOCKUP_HEIGHT - y) * scale
+            }
+
+            MockupAnchor.RIGHT_BOTTOM -> {
+                left = rootWidth - (MOCKUP_WIDTH - x) * scale
+                top = rootHeight - (MOCKUP_HEIGHT - y) * scale
+            }
+
+            MockupAnchor.CENTER_TOP -> {
+                val centerOffset = (x + width / 2f - MOCKUP_WIDTH / 2f) * scale
+                left = rootWidth / 2f + centerOffset - scaledWidth / 2f
+                top = y * scale
+            }
+
+            MockupAnchor.CENTER -> {
+                val centerOffsetX = (x + width / 2f - MOCKUP_WIDTH / 2f) * scale
+                val centerOffsetY = (y + height / 2f - MOCKUP_HEIGHT / 2f) * scale
+                left = rootWidth / 2f + centerOffsetX - scaledWidth / 2f
+                top = rootHeight / 2f + centerOffsetY - scaledHeight / 2f
+            }
+        }
+
+        placeView(view, left, top, scaledWidth, scaledHeight)
     }
 
     private fun placeView(view: View, left: Float, top: Float, width: Float, height: Float) {

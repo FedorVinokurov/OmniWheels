@@ -31,8 +31,39 @@
         android:layout_height="128dp"
         android:layout_marginStart="114dp"
         android:layout_marginBottom="64dp"
+        android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
+
+    <ImageView
+        android:id="@+id/drive_forward_button"
+        android:layout_width="142dp"
+        android:layout_height="123dp"
+        android:layout_marginStart="100dp"
+        android:layout_marginTop="297dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Forward"
+        android:padding="0dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ui_drive_forward"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <ImageView
+        android:id="@+id/drive_backward_button"
+        android:layout_width="138dp"
+        android:layout_height="114dp"
+        android:layout_marginStart="101dp"
+        android:layout_marginTop="426dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Backward"
+        android:padding="0dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ui_drive_backward"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
     <com.example.omniwheels.OmniJoystickView
         android:id="@+id/turn_joystick"
@@ -54,39 +85,39 @@
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/camera_up_button"
-            android:layout_width="88dp"
-            android:layout_height="79dp"
-            android:layout_marginEnd="99dp"
-            android:layout_marginBottom="382dp"
+            android:layout_width="110dp"
+            android:layout_height="100dp"
+            android:layout_marginStart="1082dp"
+            android:layout_marginBottom="371dp"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintStart_toStartOf="parent" />
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/camera_down_button"
-            android:layout_width="83dp"
-            android:layout_height="85dp"
-            android:layout_marginEnd="101dp"
-            android:layout_marginBottom="243dp"
+            android:layout_width="106dp"
+            android:layout_height="93dp"
+            android:layout_marginStart="1081dp"
+            android:layout_marginBottom="238dp"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintStart_toStartOf="parent" />
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/side_left_button"
-            android:layout_width="112dp"
-            android:layout_height="120dp"
-            android:layout_marginEnd="232dp"
-            android:layout_marginBottom="64dp"
+            android:layout_width="126dp"
+            android:layout_height="133dp"
+            android:layout_marginStart="926dp"
+            android:layout_marginBottom="59dp"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintStart_toStartOf="parent" />
 
         <com.example.omniwheels.TriangleButtonView
             android:id="@+id/side_right_button"
-            android:layout_width="103dp"
-            android:layout_height="120dp"
-            android:layout_marginEnd="112dp"
-            android:layout_marginBottom="64dp"
+            android:layout_width="113dp"
+            android:layout_height="136dp"
+            android:layout_marginStart="1061dp"
+            android:layout_marginBottom="57dp"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent" />
+            app:layout_constraintStart_toStartOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <LinearLayout
@@ -238,14 +269,15 @@
         android:id="@+id/debug_toggle"
         android:layout_width="72dp"
         android:layout_height="56dp"
-        android:layout_marginStart="74dp"
+        android:layout_marginStart="71dp"
         android:layout_marginTop="26dp"
+        android:visibility="gone"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
         <View
-            android:layout_width="47dp"
-            android:layout_height="22dp"
+            android:layout_width="54dp"
+            android:layout_height="33dp"
             android:layout_gravity="center"
             android:background="@drawable/ui_dbg" />
     </FrameLayout>
@@ -263,57 +295,68 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/debug_toggle" />
 
-    <LinearLayout
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/mode_overlay"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:orientation="horizontal"
-        android:padding="24dp"
+        android:layout_height="0dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <Button
+        <ImageView
             android:id="@+id/mode_camera"
-            android:layout_width="160dp"
-            android:layout_height="56dp"
-            android:text="Camera" />
+            android:layout_width="161dp"
+            android:layout_height="74dp"
+            android:layout_marginStart="29dp"
+            android:layout_marginTop="27dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Camera"
+            android:scaleType="fitCenter"
+            android:src="@drawable/start_camera"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
-        <Space
-            android:layout_width="24dp"
-            android:layout_height="1dp" />
-
-        <Button
-            android:id="@+id/mode_screen"
-            android:layout_width="160dp"
-            android:layout_height="56dp"
-            android:text="Screen" />
-
-        <Space
-            android:layout_width="24dp"
-            android:layout_height="1dp" />
-
-        <Button
+        <ImageView
             android:id="@+id/mode_joystick"
-            android:layout_width="160dp"
-            android:layout_height="56dp"
-            android:text="Joystick" />
-    </LinearLayout>
+            android:layout_width="181dp"
+            android:layout_height="72dp"
+            android:layout_marginStart="193dp"
+            android:layout_marginTop="28dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Bluetooth"
+            android:scaleType="fitCenter"
+            android:src="@drawable/start_bluetooth"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <ImageView
+            android:id="@+id/start_screen_logo"
+            android:layout_width="270dp"
+            android:layout_height="186dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="OmniWheels"
+            android:scaleType="fitCenter"
+            android:src="@drawable/start_screen"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <FrameLayout
         android:id="@+id/close_app"
         android:layout_width="72dp"
-        android:layout_height="56dp"
-        android:layout_marginTop="38dp"
-        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_height="72dp"
+        android:layout_marginStart="34dp"
+        android:layout_marginBottom="486dp"
+        android:visibility="gone"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <View
             android:layout_width="44dp"
-            android:layout_height="36dp"
+            android:layout_height="43dp"
             android:layout_gravity="center"
             android:background="@drawable/ui_close" />
     </FrameLayout>

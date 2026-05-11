@@ -360,4 +360,5 @@
             android:layout_gravity="center"
             android:background="@drawable/ui_close" />
     </FrameLayout>
+
 </androidx.constraintlayout.widget.ConstraintLayout>

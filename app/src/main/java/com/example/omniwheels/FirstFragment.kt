@@ -2,6 +2,7 @@ package com.example.omniwheels
 
 import android.Manifest
 import android.app.PendingIntent
+import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -80,6 +82,7 @@ class FirstFragment : Fragment() {
     private var rtcEngine: RtcEngine? = null
     private var commandStreamId: Int? = null
     private var pendingAgoraStart = false
+    private var pendingBluetoothConnect = false
 
     @Volatile private var controllerMode = false
     private var localJoystickMode = false
@@ -668,6 +671,7 @@ class FirstFragment : Fragment() {
         showControlUi()
         binding.agoraVideoContainer.removeAllViews()
         updateDebugPanelVisibility()
+        connectBluetooth()
         startAgoraWhenReady()
     }
 
@@ -994,6 +998,12 @@ class FirstFragment : Fragment() {
     }
 
     private fun connectBluetooth() {
+        if (!BluetoothRobotConnection.hasPermissions(requireContext())) {
+            pendingBluetoothConnect = true
+            requestPermissions(BluetoothRobotConnection.requiredPermissions(), BLUETOOTH_PERMISSION_REQUEST)
+            return
+        }
+
         connectionStatus = "BT: Поиск..."
         updateCommandStatus()
         thread {
@@ -1010,7 +1020,31 @@ class FirstFragment : Fragment() {
                     sendDriveCommand()
                     sendServo1Angle(servo1Angle, force = true)
                 }
-            } catch (e: Exception) { mainHandler.post { connectionStatus = "BT: Ошибка" } }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    connectionStatus = "BT: ${e.message ?: "error"}"
+                    updateCommandStatus()
+                    when (e.message) {
+                        "Bluetooth is disabled" -> {
+                            pendingBluetoothConnect = true
+                            startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+                        }
+
+                        "No paired Bluetooth devices" -> {
+                            pendingBluetoothConnect = true
+                            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingBluetoothConnect && BluetoothRobotConnection.hasPermissions(requireContext())) {
+            pendingBluetoothConnect = false
+            connectBluetooth()
         }
     }
 
@@ -1020,15 +1054,28 @@ class FirstFragment : Fragment() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != CAMERA_PERMISSION_REQUEST) return
-
         val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-        if (granted && pendingAgoraStart) {
-            startAgoraWhenReady()
-        } else {
-            pendingAgoraStart = false
-            commandTxStatus = "CAM: permission denied"
-            updateCommandStatus()
+        when (requestCode) {
+            CAMERA_PERMISSION_REQUEST -> {
+                if (granted && pendingAgoraStart) {
+                    startAgoraWhenReady()
+                } else {
+                    pendingAgoraStart = false
+                    commandTxStatus = "CAM: permission denied"
+                    updateCommandStatus()
+                }
+            }
+
+            BLUETOOTH_PERMISSION_REQUEST -> {
+                if (granted && pendingBluetoothConnect) {
+                    pendingBluetoothConnect = false
+                    connectBluetooth()
+                } else {
+                    pendingBluetoothConnect = false
+                    connectionStatus = "BT: permission denied"
+                    updateCommandStatus()
+                }
+            }
         }
     }
 

@@ -47,6 +47,10 @@ private const val BAUD_RATE = 115200
 private const val ACTION_USB_PERMISSION = "com.example.omniwheels.USB_PERMISSION"
 private const val CAMERA_PERMISSION_REQUEST = 101
 private const val BLUETOOTH_PERMISSION_REQUEST = 102
+private const val PREFS_NAME = "omniwheels_control_settings"
+private const val PREF_FORWARD_SPEED = "forward_speed"
+private const val PREF_TURN_BUTTON_SPEED = "turn_button_speed"
+private const val PREF_TURN_BUTTON_DURATION = "turn_button_duration"
 
 // Лимиты для защиты сервопривода (чтобы не клинило)
 private const val SERVO_SAFE_MIN = 10
@@ -83,6 +87,7 @@ class FirstFragment : Fragment() {
     private var commandStreamId: Int? = null
     private var pendingAgoraStart = false
     private var pendingBluetoothConnect = false
+    private var closingApp = false
 
     @Volatile private var controllerMode = false
     private var localJoystickMode = false
@@ -133,6 +138,7 @@ class FirstFragment : Fragment() {
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        closingApp = false
         _binding = FragmentFirstBinding.inflate(inflater, container, false)
         return binding.root
     }
@@ -182,6 +188,8 @@ class FirstFragment : Fragment() {
         setCameraButtonListener(binding.cameraDownButton, -1f)
 
         // Настройка слайдера с безопасными границами
+        loadControlSettings()
+
         binding.servoAngleSlider.max = 180
         binding.servoAngleSlider.progress = servo1Angle
         binding.servoAngleSlider.setOnSeekBarChangeListener(servoAngleSliderListener)
@@ -208,7 +216,7 @@ class FirstFragment : Fragment() {
             debugPanelVisible = !debugPanelVisible
             updateDebugPanelVisibility()
         }
-        binding.closeApp.setOnClickListener { requireActivity().finishAndRemoveTask() }
+        binding.closeApp.setOnClickListener { closeAppSafely() }
 
         updateServoAngleLabel()
         updateSpeedLabels()
@@ -546,10 +554,12 @@ class FirstFragment : Fragment() {
     }
 
     private fun updateServoAngleLabel() {
+        if (_binding == null) return
         binding.servoAngleValue.text = "Servo: $servo1Angle°"
     }
 
     private fun updateSpeedLabels() {
+        if (_binding == null) return
         binding.forwardSpeedValue.text = "Forward: $forwardSpeedLimit"
         binding.sideSpeedValue.text = "Left/right: $sideSpeedLimit"
         binding.turnSpeedValue.text = "Rotate: $turnSpeedLimit"
@@ -558,10 +568,18 @@ class FirstFragment : Fragment() {
     }
 
     private fun updateDebugPanelVisibility() {
+        if (_binding == null) return
         val visible = if (debugPanelVisible) View.VISIBLE else View.GONE
         binding.commandStatus.visibility = visible
         binding.speedControls.visibility =
-            if (debugPanelVisible && binding.driveForwardButton.visibility == View.VISIBLE) View.VISIBLE else View.GONE
+            if (
+                binding.driveForwardButton.visibility == View.VISIBLE &&
+                (localJoystickMode || debugPanelVisible)
+            ) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
     }
 
     private fun updateJoystickDebug() {
@@ -584,11 +602,31 @@ class FirstFragment : Fragment() {
     }
 
     private fun updateCommandStatus() {
+        if (_binding == null) return
         if (lastReleaseAt != 0L) {
             releaseDebugStatus = "RELEASE: ${SystemClock.uptimeMillis() - lastReleaseAt}ms"
         }
         binding.commandStatus.text =
             "$connectionStatus\n$joystickDebugStatus\n$desiredMotorStatus\n$releaseDebugStatus\n$commandTxStatus\n$arduinoRxStatus\n$commandRxStatus"
+    }
+
+    private fun loadControlSettings() {
+        val prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        forwardSpeedLimit = prefs.getInt(PREF_FORWARD_SPEED, forwardSpeedLimit).coerceIn(0, FULL_PWM)
+        turnButtonSpeed = prefs.getInt(PREF_TURN_BUTTON_SPEED, turnButtonSpeed).coerceIn(0, FULL_PWM)
+        turnButtonDurationMs = prefs.getInt(
+            PREF_TURN_BUTTON_DURATION,
+            turnButtonDurationMs
+        ).coerceIn(0, MAX_TURN_BUTTON_DURATION_MS)
+    }
+
+    private fun saveControlSettings() {
+        requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(PREF_FORWARD_SPEED, forwardSpeedLimit)
+            .putInt(PREF_TURN_BUTTON_SPEED, turnButtonSpeed)
+            .putInt(PREF_TURN_BUTTON_DURATION, turnButtonDurationMs)
+            .apply()
     }
 
     private fun Float.toDebug(): String = String.format(java.util.Locale.US, "%.2f", this)
@@ -624,6 +662,7 @@ class FirstFragment : Fragment() {
                 progress.coerceIn(0, MAX_TURN_BUTTON_DURATION_MS)
         }
         updateSpeedLabels()
+        saveControlSettings()
     }
 
     // --- Логика Agora ---
@@ -695,6 +734,7 @@ class FirstFragment : Fragment() {
         binding.closeApp.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
+        binding.speedControls.visibility = if (localJoystickMode) View.VISIBLE else View.GONE
         binding.root.post { applyMockupControlPositions() }
         updateDebugPanelVisibility()
     }
@@ -734,6 +774,7 @@ class FirstFragment : Fragment() {
     }
 
     private fun applyMockupControlPositions() {
+        if (_binding == null) return
         val rootWidth = binding.root.width
         val rootHeight = binding.root.height
         if (rootWidth <= 0 || rootHeight <= 0) return
@@ -991,6 +1032,7 @@ class FirstFragment : Fragment() {
     }
 
     private fun setupRemoteVideo(uid: Int) {
+        if (_binding == null) return
         binding.agoraVideoContainer.removeAllViews()
         val surface = SurfaceView(requireContext())
         binding.agoraVideoContainer.addView(surface)
@@ -998,6 +1040,7 @@ class FirstFragment : Fragment() {
     }
 
     private fun connectBluetooth() {
+        if (closingApp || _binding == null) return
         if (!BluetoothRobotConnection.hasPermissions(requireContext())) {
             pendingBluetoothConnect = true
             requestPermissions(BluetoothRobotConnection.requiredPermissions(), BLUETOOTH_PERMISSION_REQUEST)
@@ -1009,9 +1052,14 @@ class FirstFragment : Fragment() {
         thread {
             try {
                 serialConnection = BluetoothRobotConnection.openFirstPaired(requireContext()) { line ->
-                    mainHandler.post { arduinoRxStatus = line; updateCommandStatus() }
+                    mainHandler.post {
+                        if (closingApp || _binding == null) return@post
+                        arduinoRxStatus = line
+                        updateCommandStatus()
+                    }
                 }
                 mainHandler.post {
+                    if (closingApp || _binding == null) return@post
                     connectionStatus = "BT: OK"
                     lastCommand = ""
                     lastMotorCommand = ""
@@ -1022,6 +1070,7 @@ class FirstFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 mainHandler.post {
+                    if (closingApp || _binding == null) return@post
                     connectionStatus = "BT: ${e.message ?: "error"}"
                     updateCommandStatus()
                     when (e.message) {
@@ -1042,9 +1091,40 @@ class FirstFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        if (closingApp || _binding == null) return
         if (pendingBluetoothConnect && BluetoothRobotConnection.hasPermissions(requireContext())) {
             pendingBluetoothConnect = false
             connectBluetooth()
+        }
+    }
+
+    private fun closeAppSafely() {
+        closingApp = true
+        pendingAgoraStart = false
+        pendingBluetoothConnect = false
+        mainHandler.removeCallbacksAndMessages(null)
+        closeConnections()
+        if (isAdded) {
+            requireActivity().finish()
+        }
+    }
+
+    private fun closeConnections() {
+        try {
+            serialConnection?.close()
+        } catch (_: Exception) {
+        }
+        serialConnection = null
+
+        try {
+            rtcEngine?.leaveChannel()
+        } catch (_: Exception) {
+        }
+        rtcEngine = null
+
+        try {
+            RtcEngine.destroy()
+        } catch (_: Exception) {
         }
     }
 
@@ -1080,9 +1160,9 @@ class FirstFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        serialConnection?.close()
-        rtcEngine?.leaveChannel()
-        RtcEngine.destroy()
+        closingApp = true
+        mainHandler.removeCallbacksAndMessages(null)
+        closeConnections()
         super.onDestroyView()
         _binding = null
     }

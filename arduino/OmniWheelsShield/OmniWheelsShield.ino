@@ -21,14 +21,17 @@ Servo servo1;
 const int SERVO1_PIN = 10;
 const int SERVO_MIN_ANGLE = 0;
 const int SERVO_MAX_ANGLE = 180;
+const int SERVO_START_ANGLE = 180;
 const int SERVO_STEP_DEGREES = 3;
 const unsigned long SERVO_UPDATE_INTERVAL_MS = 10;
+const unsigned long SERVO_DETACH_DELAY_MS = 400;
 const unsigned long MOTOR_WATCHDOG_TIMEOUT_MS = 500;
 const unsigned long TURN_MAX_DURATION_MS = 5000;
 
-int servoCurrentAngle = 90;
-int servoTargetAngle = 90;
+int servoCurrentAngle = SERVO_START_ANGLE;
+int servoTargetAngle = SERVO_START_ANGLE;
 unsigned long lastServoUpdateMs = 0;
+unsigned long servoDetachAtMs = 0;
 unsigned long lastMotorDebugMs = 0;
 unsigned long lastMotorCommandMs = 0;
 unsigned long turnStopAtMs = 0;
@@ -43,8 +46,9 @@ bool hasLatestCommand = false;
 void setup() {
   Serial.begin(SERIAL_BAUD);
 
-  servo1.attach(SERVO1_PIN);
+  attachServoIfNeeded();
   servo1.write(servoCurrentAngle);
+  servoDetachAtMs = millis() + SERVO_DETACH_DELAY_MS;
 
   stopAll();
   lastMotorCommandMs = millis();
@@ -203,16 +207,26 @@ void handleServoCommand(char *command) {
 
 void setServoTarget(int angle) {
   servoTargetAngle = constrain(angle, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE);
+  attachServoIfNeeded();
+  servoDetachAtMs = millis() + SERVO_DETACH_DELAY_MS;
   Serial.print("ACK S1 ");
   Serial.println(servoTargetAngle);
 }
 
 void updateServo() {
   unsigned long now = millis();
+  if (!servo1.attached()) return;
+
+  if (servoCurrentAngle == servoTargetAngle) {
+    if (servoDetachAtMs != 0 && (long)(now - servoDetachAtMs) >= 0) {
+      servo1.detach();
+      servoDetachAtMs = 0;
+    }
+    return;
+  }
+
   if (now - lastServoUpdateMs < SERVO_UPDATE_INTERVAL_MS) return;
   lastServoUpdateMs = now;
-
-  if (servoCurrentAngle == servoTargetAngle) return;
 
   if (servoCurrentAngle < servoTargetAngle) {
     servoCurrentAngle = min(servoCurrentAngle + SERVO_STEP_DEGREES, servoTargetAngle);
@@ -220,6 +234,15 @@ void updateServo() {
     servoCurrentAngle = max(servoCurrentAngle - SERVO_STEP_DEGREES, servoTargetAngle);
   }
 
+  servo1.write(servoCurrentAngle);
+  if (servoCurrentAngle == servoTargetAngle) {
+    servoDetachAtMs = now + SERVO_DETACH_DELAY_MS;
+  }
+}
+
+void attachServoIfNeeded() {
+  if (servo1.attached()) return;
+  servo1.attach(SERVO1_PIN);
   servo1.write(servoCurrentAngle);
 }
 

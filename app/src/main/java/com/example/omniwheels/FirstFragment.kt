@@ -22,6 +22,7 @@ import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.SeekBar
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
@@ -149,6 +150,7 @@ class FirstFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        requireActivity().window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         binding.driveJoystick.snapToCardinal = false
         binding.driveJoystick.releaseListener = {
@@ -230,6 +232,15 @@ class FirstFragment : Fragment() {
         updateDebugPanelVisibility()
         updateCommandStatus()
         binding.root.post { applyMockupControlPositions() }
+        binding.root.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            val width = right - left
+            val height = bottom - top
+            val oldWidth = oldRight - oldLeft
+            val oldHeight = oldBottom - oldTop
+            if (width > 0 && height > 0 && (width != oldWidth || height != oldHeight)) {
+                binding.root.post { applyMockupControlPositions() }
+            }
+        }
     }
 
     private fun setSideButtonListener(view: View, value: Float) {
@@ -819,7 +830,7 @@ class FirstFragment : Fragment() {
     }
 
     private fun startAgoraWhenReady() {
-        if (!controllerMode && !hasMediaPermissions()) {
+        if (!hasMediaPermissions()) {
             pendingAgoraStart = true
             requestPermissions(mediaPermissions(), CAMERA_PERMISSION_REQUEST)
             return
@@ -835,7 +846,11 @@ class FirstFragment : Fragment() {
     }
 
     private fun mediaPermissions(): Array<String> {
-        return arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        return if (controllerMode) {
+            arrayOf(Manifest.permission.RECORD_AUDIO)
+        } else {
+            arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     private fun applyMockupControlPositions() {
@@ -1073,7 +1088,9 @@ class FirstFragment : Fragment() {
     private fun initAgora() {
         try {
             rtcEngine = RtcEngine.create(requireContext(), AGORA_APP_ID, rtcEventHandler).apply {
+                enableAudio()
                 enableVideo()
+                setEnableSpeakerphone(true)
                 setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
                 setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
             }
@@ -1084,7 +1101,7 @@ class FirstFragment : Fragment() {
             }
             rtcEngine?.joinChannel(null, AGORA_CHANNEL, 0, ChannelMediaOptions().apply {
                 publishCameraTrack = !controllerMode
-                publishMicrophoneTrack = !controllerMode
+                publishMicrophoneTrack = true
             })
         } catch (e: Exception) { Log.e(LOG_TAG, "Agora Error", e) }
     }
@@ -1106,12 +1123,6 @@ class FirstFragment : Fragment() {
 
     private fun connectBluetooth() {
         if (closingApp || _binding == null) return
-        if (!BluetoothRobotConnection.hasPermissions(requireContext())) {
-            pendingBluetoothConnect = true
-            requestPermissions(BluetoothRobotConnection.requiredPermissions(), BLUETOOTH_PERMISSION_REQUEST)
-            return
-        }
-
         connectionStatus = "BT: Поиск..."
         updateCommandStatus()
         thread {
@@ -1162,7 +1173,7 @@ class FirstFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         if (closingApp || _binding == null) return
-        if (pendingBluetoothConnect && BluetoothRobotConnection.hasPermissions(requireContext())) {
+        if (pendingBluetoothConnect) {
             pendingBluetoothConnect = false
             connectBluetooth()
         }
@@ -1231,6 +1242,7 @@ class FirstFragment : Fragment() {
 
     override fun onDestroyView() {
         closingApp = true
+        requireActivity().window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         mainHandler.removeCallbacksAndMessages(null)
         closeConnections()
         super.onDestroyView()

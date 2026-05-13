@@ -126,9 +126,9 @@ class BluetoothRobotConnection private constructor(
     companion object {
         fun requiredPermissions(): Array<String> {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT)
             } else {
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                emptyArray()
             }
         }
 
@@ -143,9 +143,6 @@ class BluetoothRobotConnection private constructor(
             context: Context,
             onLineReceived: (String) -> Unit = {},
         ): BluetoothRobotConnection {
-            if (!hasPermissions(context)) {
-                throw IOException("Bluetooth permission required")
-            }
             val adapter = bluetoothAdapter(context)
                 ?: throw IOException("Bluetooth not supported")
             if (!adapter.isEnabled) {

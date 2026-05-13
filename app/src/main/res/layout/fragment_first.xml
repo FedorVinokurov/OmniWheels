@@ -213,6 +213,24 @@
             android:progress="223" />
 
         <TextView
+            android:id="@+id/drive_turn_slowdown_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="#99000000"
+            android:padding="3dp"
+            android:text="Drive turn slowdown: 0.50"
+            android:textColor="@color/white"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/drive_turn_slowdown_slider"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:max="100"
+            android:progress="50" />
+
+        <TextView
             android:id="@+id/turn_button_duration_value"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

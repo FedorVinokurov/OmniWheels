@@ -51,6 +51,7 @@ private const val PREFS_NAME = "omniwheels_control_settings"
 private const val PREF_FORWARD_SPEED = "forward_speed"
 private const val PREF_TURN_BUTTON_SPEED = "turn_button_speed"
 private const val PREF_TURN_BUTTON_DURATION = "turn_button_duration"
+private const val PREF_DRIVE_TURN_SLOWDOWN = "drive_turn_slowdown"
 
 // Лимиты для защиты сервопривода (чтобы не клинило)
 private const val SERVO_SAFE_MIN = 10
@@ -112,6 +113,8 @@ class FirstFragment : Fragment() {
     private var turnSpeedLimit = 180
     private var turnButtonSpeed = DEFAULT_TURN_BUTTON_SPEED
     private var turnButtonDurationMs = DEFAULT_TURN_BUTTON_DURATION_MS
+    private var driveTurnSlowdownPercent = 50
+    private var driveTurnDirection = 0
     private var turnButtonRunnable: Runnable? = null
 
     private var connectionStatus = "BT: нет"
@@ -205,6 +208,9 @@ class FirstFragment : Fragment() {
         binding.turnButtonSpeedSlider.max = FULL_PWM
         binding.turnButtonSpeedSlider.progress = turnButtonSpeed
         binding.turnButtonSpeedSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
+        binding.driveTurnSlowdownSlider.max = 100
+        binding.driveTurnSlowdownSlider.progress = driveTurnSlowdownPercent
+        binding.driveTurnSlowdownSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
         binding.turnButtonDurationSlider.max = MAX_TURN_BUTTON_DURATION_MS
         binding.turnButtonDurationSlider.progress = turnButtonDurationMs
         binding.turnButtonDurationSlider.setOnSeekBarChangeListener(axisSpeedSliderListener)
@@ -256,7 +262,14 @@ class FirstFragment : Fragment() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     pressedView.alpha = 0.55f
-                    sendTurnCommand(direction * turnButtonSpeed, turnButtonDurationMs.toLong())
+                    driveTurnDirection = direction
+                    val driveActive = abs(joyX) >= MOTOR_DIRECTION_DEAD_ZONE ||
+                        abs(joyY) >= MOTOR_DIRECTION_DEAD_ZONE
+                    if (driveActive) {
+                        sendDriveCommand()
+                    } else {
+                        sendTurnCommand(direction * turnButtonSpeed, turnButtonDurationMs.toLong())
+                    }
                     true
                 }
 
@@ -264,6 +277,10 @@ class FirstFragment : Fragment() {
                 MotionEvent.ACTION_CANCEL,
                 MotionEvent.ACTION_OUTSIDE -> {
                     pressedView.alpha = 1f
+                    if (driveTurnDirection == direction) {
+                        driveTurnDirection = 0
+                        sendDriveCommand()
+                    }
                     true
                 }
 
@@ -373,7 +390,15 @@ class FirstFragment : Fragment() {
         val forward = analogAxisSpeed(joyY, forwardSpeedLimit)
         val rotate = analogAxisSpeed(joyX, turnSpeedLimit)
         val strafe = analogAxisSpeed(rotation, sideSpeedLimit)
-        val speeds = mixedMotorSpeeds(forward, rotate, strafe)
+        val speeds = if (
+            driveTurnDirection != 0 &&
+            strafe == 0 &&
+            abs(forward) > 0
+        ) {
+            driveTurnMotorSpeeds(forward, -driveTurnDirection)
+        } else {
+            mixedMotorSpeeds(forward, rotate, strafe)
+        }
 
         desiredMotorSpeeds = speeds
         updateDesiredMotorDebug()
@@ -399,10 +424,40 @@ class FirstFragment : Fragment() {
         ).map { it.coerceIn(-FULL_PWM, FULL_PWM) }.toIntArray()
     }
 
+    private fun driveTurnMotorSpeeds(forward: Int, direction: Int): IntArray {
+        val safeForward = forward.coerceIn(-FULL_PWM, FULL_PWM)
+        val slowdown = (driveTurnSlowdownPercent / 100f).coerceIn(0f, 1f)
+        val innerSpeed = (safeForward * (1f - slowdown)).roundToInt()
+
+        val motor1: Int
+        val motor2: Int
+        val motor3: Int
+        val motor4: Int
+        if (direction > 0) {
+            motor1 = safeForward
+            motor2 = safeForward
+            motor3 = innerSpeed
+            motor4 = innerSpeed
+        } else {
+            motor1 = innerSpeed
+            motor2 = innerSpeed
+            motor3 = safeForward
+            motor4 = safeForward
+        }
+
+        return intArrayOf(
+            motor3,
+            motor2,
+            motor4,
+            motor1
+        )
+    }
+
     private fun sendStopBurst() {
         joyX = 0f
         joyY = 0f
         rotation = 0f
+        driveTurnDirection = 0
         turnButtonRunnable?.let { mainHandler.removeCallbacks(it) }
         turnButtonRunnable = null
         lastReleaseAt = SystemClock.uptimeMillis()
@@ -458,10 +513,8 @@ class FirstFragment : Fragment() {
         motorSendScheduled = false
 
         val forward = analogAxisSpeed(joyY, forwardSpeedLimit)
-        val joystickRotate = analogAxisSpeed(joyX, turnSpeedLimit)
-        val buttonRotate = speed.coerceIn(-FULL_PWM, FULL_PWM)
-        val strafe = analogAxisSpeed(rotation, sideSpeedLimit)
-        val speeds = mixedMotorSpeeds(forward, joystickRotate + buttonRotate, strafe)
+        val direction = if (speed >= 0) 1 else -1
+        val speeds = driveTurnMotorSpeeds(forward, direction)
 
         desiredMotorSpeeds = speeds
         updateDesiredMotorDebug()
@@ -564,6 +617,8 @@ class FirstFragment : Fragment() {
         binding.sideSpeedValue.text = "Left/right: $sideSpeedLimit"
         binding.turnSpeedValue.text = "Rotate: $turnSpeedLimit"
         binding.turnButtonSpeedValue.text = "Button turn speed: $turnButtonSpeed"
+        binding.driveTurnSlowdownValue.text =
+            "Drive turn slowdown: ${String.format(java.util.Locale.US, "%.2f", driveTurnSlowdownPercent / 100f)}"
         binding.turnButtonDurationValue.text = "Button turn time: $turnButtonDurationMs ms"
     }
 
@@ -618,6 +673,10 @@ class FirstFragment : Fragment() {
             PREF_TURN_BUTTON_DURATION,
             turnButtonDurationMs
         ).coerceIn(0, MAX_TURN_BUTTON_DURATION_MS)
+        driveTurnSlowdownPercent = prefs.getInt(
+            PREF_DRIVE_TURN_SLOWDOWN,
+            driveTurnSlowdownPercent
+        ).coerceIn(0, 100)
     }
 
     private fun saveControlSettings() {
@@ -626,6 +685,7 @@ class FirstFragment : Fragment() {
             .putInt(PREF_FORWARD_SPEED, forwardSpeedLimit)
             .putInt(PREF_TURN_BUTTON_SPEED, turnButtonSpeed)
             .putInt(PREF_TURN_BUTTON_DURATION, turnButtonDurationMs)
+            .putInt(PREF_DRIVE_TURN_SLOWDOWN, driveTurnSlowdownPercent)
             .apply()
     }
 
@@ -658,6 +718,7 @@ class FirstFragment : Fragment() {
             R.id.side_speed_slider -> sideSpeedLimit = value
             R.id.turn_speed_slider -> turnSpeedLimit = value
             R.id.turn_button_speed_slider -> turnButtonSpeed = value
+            R.id.drive_turn_slowdown_slider -> driveTurnSlowdownPercent = progress.coerceIn(0, 100)
             R.id.turn_button_duration_slider -> turnButtonDurationMs =
                 progress.coerceIn(0, MAX_TURN_BUTTON_DURATION_MS)
         }

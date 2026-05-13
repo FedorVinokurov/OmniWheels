@@ -55,7 +55,8 @@ private const val PREF_DRIVE_TURN_SLOWDOWN = "drive_turn_slowdown"
 
 // Лимиты для защиты сервопривода (чтобы не клинило)
 private const val SERVO_SAFE_MIN = 10
-private const val SERVO_SAFE_MAX = 170
+private const val SERVO_SAFE_MAX = 180
+private const val SERVO_DEFAULT_ANGLE = 180
 
 // Настройки фильтрации данных
 private const val SERVO_THROTTLE_MS = 65L
@@ -96,9 +97,9 @@ class FirstFragment : Fragment() {
     private var joyX = 0f
     private var joyY = 0f
     private var rotation = 0f
-    private var turnY = 0f
+    private var turnY = -1f
 
-    private var servo1Angle = 90
+    private var servo1Angle = SERVO_DEFAULT_ANGLE
     private var lastSentServoAngle = -1
     private var lastServoSliderSentAt = 0L
     private var lastServo1Command = ""
@@ -171,7 +172,7 @@ class FirstFragment : Fragment() {
             rotation = 0f
             sendStopBurst()
             mainHandler.postDelayed({
-                sendServo1Angle(joystickYToServoAngle(turnY), force = true)
+                sendServo1Angle(servo1Angle, force = true)
             }, 260L)
         }
         binding.turnJoystick.listener = { x, y ->
@@ -370,7 +371,10 @@ class FirstFragment : Fragment() {
     }
 
     private fun sendServo1Angle(angle: Int, force: Boolean = false) {
-        val command = "S1 $angle\n"
+        val safeAngle = angle.coerceIn(SERVO_SAFE_MIN, SERVO_SAFE_MAX)
+        servo1Angle = safeAngle
+        updateServoAngleLabel()
+        val command = "S1 $safeAngle\n"
         if (!force && command == lastServo1Command) return
         lastServo1Command = command
 

@@ -1083,6 +1083,11 @@ class FirstFragment : Fragment() {
                             pendingBluetoothConnect = true
                             startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
                         }
+
+                        "Bluetooth pairing required" -> {
+                            pendingBluetoothConnect = true
+                            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                        }
                     }
                 }
             }

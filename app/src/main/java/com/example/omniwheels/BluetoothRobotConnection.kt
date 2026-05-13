@@ -28,6 +28,7 @@ private val BLE_WRITE_UUID_FALLBACK: UUID =
     UUID.fromString("0000FFE2-0000-1000-8000-00805F9B34FB")
 private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID =
     UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
+private const val ROBOT_BLUETOOTH_ADDRESS = "E4:A7:3B:3F:1F:22"
 
 class BluetoothRobotConnection private constructor(
     private val gatt: BluetoothGatt,
@@ -149,6 +150,10 @@ class BluetoothRobotConnection private constructor(
                 ?: throw IOException("Bluetooth not supported")
             if (!adapter.isEnabled) {
                 throw IOException("Bluetooth is disabled")
+            }
+            if (BluetoothAdapter.checkBluetoothAddress(ROBOT_BLUETOOTH_ADDRESS)) {
+                val device = adapter.getRemoteDevice(ROBOT_BLUETOOTH_ADDRESS)
+                return open(context, device, onLineReceived)
             }
             val device = adapter.bondedDevices
                 .sortedWith(

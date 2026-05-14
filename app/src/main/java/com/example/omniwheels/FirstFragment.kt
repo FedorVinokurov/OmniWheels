@@ -24,6 +24,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.SeekBar
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.fragment.app.Fragment
 import androidx.core.content.ContextCompat
@@ -123,6 +124,7 @@ class FirstFragment : Fragment() {
     private var commandTxStatus = "TX: нет"
     private var arduinoRxStatus = "ARD RX: нет"
     private var commandRxStatus = "CMD RX: нет"
+    private var agoraAudioStatus = "AUD: none"
 
     private var joystickDebugStatus = "JOY L: 0,0 R: 0"
     private var desiredMotorStatus = "DES M: 0 0 0 0"
@@ -133,6 +135,21 @@ class FirstFragment : Fragment() {
     private val commandWriteSequence = AtomicLong(0)
     private val pendingCommandWrite = AtomicReference<PendingCommand?>(null)
     private val commandWriterActive = AtomicBoolean(false)
+    private val mediaPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val granted = mediaPermissions().all { permission ->
+                grants[permission] == true ||
+                    ContextCompat.checkSelfPermission(requireContext(), permission) == PackageManager.PERMISSION_GRANTED
+            }
+            if (granted && pendingAgoraStart) {
+                pendingAgoraStart = false
+                initAgora()
+            } else {
+                pendingAgoraStart = false
+                commandTxStatus = "AUDIO: permission denied"
+                updateCommandStatus()
+            }
+        }
     private val motorSendRunnable = Runnable {
         motorSendScheduled = false
         val keepAlive = desiredMotorSpeeds.any { it != 0 }
@@ -677,7 +694,7 @@ class FirstFragment : Fragment() {
             releaseDebugStatus = "RELEASE: ${SystemClock.uptimeMillis() - lastReleaseAt}ms"
         }
         binding.commandStatus.text =
-            "$connectionStatus\n$joystickDebugStatus\n$desiredMotorStatus\n$releaseDebugStatus\n$commandTxStatus\n$arduinoRxStatus\n$commandRxStatus"
+            "$connectionStatus\n$joystickDebugStatus\n$desiredMotorStatus\n$releaseDebugStatus\n$commandTxStatus\n$arduinoRxStatus\n$commandRxStatus\n$agoraAudioStatus"
     }
 
     private fun loadControlSettings() {
@@ -746,19 +763,51 @@ class FirstFragment : Fragment() {
     private val rtcEventHandler = object : IRtcEngineEventHandler() {
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
             commandStreamId = rtcEngine?.createDataStream(DataStreamConfig())
+            rtcEngine?.enableLocalAudio(true)
+            rtcEngine?.muteLocalAudioStream(false)
+            rtcEngine?.adjustRecordingSignalVolume(400)
+            rtcEngine?.adjustPlaybackSignalVolume(400)
+            mainHandler.post {
+                agoraAudioStatus = "AUD: joined"
+                updateCommandStatus()
+            }
         }
 
         override fun onUserJoined(uid: Int, elapsed: Int) {
+            rtcEngine?.adjustUserPlaybackSignalVolume(uid, 400)
             if (controllerMode) mainHandler.post { setupRemoteVideo(uid) }
+        }
+
+        override fun onFirstLocalAudioFramePublished(elapsed: Int) {
+            mainHandler.post {
+                agoraAudioStatus = "AUD: local pub"
+                updateCommandStatus()
+            }
+        }
+
+        override fun onFirstRemoteAudioFrame(uid: Int, elapsed: Int) {
+            mainHandler.post {
+                agoraAudioStatus = "AUD: remote $uid"
+                updateCommandStatus()
+            }
+        }
+
+        override fun onLocalAudioStateChanged(state: Int, error: Int) {
+            mainHandler.post {
+                agoraAudioStatus = "AUD local: $state/$error"
+                updateCommandStatus()
+            }
         }
 
         override fun onStreamMessage(uid: Int, streamId: Int, data: ByteArray?) {
             val cmd = data?.decodeToString().orEmpty()
-            if (!controllerMode && cmd.isNotBlank()) {
+            if (cmd.isNotBlank()) {
                 mainHandler.post {
                     commandRxStatus = "CMD RX: ${cmd.trim()}"
                     updateCommandStatus()
-                    writeCommand(cmd, force = true)
+                    if (!controllerMode) {
+                        writeCommand(cmd, force = true)
+                    }
                 }
             }
         }
@@ -832,7 +881,11 @@ class FirstFragment : Fragment() {
     private fun startAgoraWhenReady() {
         if (!hasMediaPermissions()) {
             pendingAgoraStart = true
-            requestPermissions(mediaPermissions(), CAMERA_PERMISSION_REQUEST)
+            binding.root.post {
+                if (_binding != null && pendingAgoraStart) {
+                    mediaPermissionLauncher.launch(mediaPermissions())
+                }
+            }
             return
         }
         pendingAgoraStart = false
@@ -1090,7 +1143,13 @@ class FirstFragment : Fragment() {
             rtcEngine = RtcEngine.create(requireContext(), AGORA_APP_ID, rtcEventHandler).apply {
                 enableAudio()
                 enableVideo()
+                setAudioProfile(Constants.AUDIO_PROFILE_MUSIC_STANDARD, Constants.AUDIO_SCENARIO_GAME_STREAMING)
+                setDefaultAudioRoutetoSpeakerphone(true)
                 setEnableSpeakerphone(true)
+                enableLocalAudio(true)
+                muteLocalAudioStream(false)
+                adjustRecordingSignalVolume(400)
+                adjustPlaybackSignalVolume(400)
                 setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
                 setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
             }
@@ -1102,6 +1161,11 @@ class FirstFragment : Fragment() {
             rtcEngine?.joinChannel(null, AGORA_CHANNEL, 0, ChannelMediaOptions().apply {
                 publishCameraTrack = !controllerMode
                 publishMicrophoneTrack = true
+                autoSubscribeAudio = true
+                autoSubscribeVideo = true
+                enableAudioRecordingOrPlayout = true
+                channelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+                clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
             })
         } catch (e: Exception) { Log.e(LOG_TAG, "Agora Error", e) }
     }

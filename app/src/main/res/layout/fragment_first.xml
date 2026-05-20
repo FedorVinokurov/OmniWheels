@@ -101,21 +101,31 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent" />
 
-        <com.example.omniwheels.TriangleButtonView
+        <ImageView
             android:id="@+id/side_left_button"
             android:layout_width="126dp"
             android:layout_height="133dp"
             android:layout_marginStart="926dp"
             android:layout_marginBottom="59dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Left"
+            android:padding="0dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ui_side_left"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent" />
 
-        <com.example.omniwheels.TriangleButtonView
+        <ImageView
             android:id="@+id/side_right_button"
             android:layout_width="113dp"
             android:layout_height="136dp"
             android:layout_marginStart="1061dp"
             android:layout_marginBottom="57dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Right"
+            android:padding="0dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ui_side_right"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
@@ -376,10 +386,31 @@
         app:layout_constraintBottom_toBottomOf="parent">
 
         <View
-            android:layout_width="44dp"
-            android:layout_height="43dp"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:layout_gravity="center"
             android:background="@drawable/ui_close" />
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/volume_toggle"
+        android:layout_width="59dp"
+        android:layout_height="59dp"
+        android:layout_marginStart="141dp"
+        android:layout_marginTop="26dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:id="@+id/volume_toggle_icon"
+            android:layout_width="59dp"
+            android:layout_height="59dp"
+            android:layout_gravity="center"
+            android:contentDescription="Volume"
+            android:scaleType="fitCenter"
+            android:src="@drawable/volume_on" />
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

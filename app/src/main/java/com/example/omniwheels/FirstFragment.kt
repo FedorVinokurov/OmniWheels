@@ -69,11 +69,14 @@ private const val FULL_PWM = 255
 private const val DEFAULT_TURN_BUTTON_SPEED = 223
 private const val DEFAULT_TURN_BUTTON_DURATION_MS = 100
 private const val MAX_TURN_BUTTON_DURATION_MS = 3000
-private const val MOCKUP_WIDTH = 1280f
-private const val MOCKUP_HEIGHT = 576f
+private const val MOCKUP_WIDTH = 576f
+private const val MOCKUP_HEIGHT = 1280f
+private const val START_MOCKUP_WIDTH = 576f
+private const val START_MOCKUP_HEIGHT = 1280f
 
 private const val AGORA_CHANNEL = "robot-room"
 private const val AGORA_APP_ID = "41f7f4e1a4bd4cda9efe3fc3696e86ae"
+private const val AGORA_AUDIO_CONTROL_PREFIX = "__OMNI_AUDIO__:"
 private const val LOG_TAG = "OmniAgora"
 
 data class PendingCommand(val line: String, val outgoing: String, val sequence: Long)
@@ -92,6 +95,7 @@ class FirstFragment : Fragment() {
     private var pendingAgoraStart = false
     private var pendingBluetoothConnect = false
     private var closingApp = false
+    private var audioEnabled = true
 
     @Volatile private var controllerMode = false
     private var localJoystickMode = false
@@ -203,8 +207,6 @@ class FirstFragment : Fragment() {
         }
         binding.cameraUpButton.direction = TriangleButtonView.Direction.UP
         binding.cameraDownButton.direction = TriangleButtonView.Direction.DOWN
-        binding.sideLeftButton.direction = TriangleButtonView.Direction.LEFT
-        binding.sideRightButton.direction = TriangleButtonView.Direction.RIGHT
         setTurnButtonListener(binding.sideLeftButton, -1)
         setTurnButtonListener(binding.sideRightButton, 1)
         setCameraButtonListener(binding.cameraUpButton, 1f)
@@ -243,6 +245,9 @@ class FirstFragment : Fragment() {
             updateDebugPanelVisibility()
         }
         binding.closeApp.setOnClickListener { closeAppSafely() }
+        binding.volumeToggle.setOnClickListener {
+            setAudioEnabled(!audioEnabled, notifyPeer = true)
+        }
 
         updateServoAngleLabel()
         updateSpeedLabels()
@@ -763,18 +768,18 @@ class FirstFragment : Fragment() {
     private val rtcEventHandler = object : IRtcEngineEventHandler() {
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
             commandStreamId = rtcEngine?.createDataStream(DataStreamConfig())
-            rtcEngine?.enableLocalAudio(true)
-            rtcEngine?.muteLocalAudioStream(false)
-            rtcEngine?.adjustRecordingSignalVolume(400)
-            rtcEngine?.adjustPlaybackSignalVolume(400)
+            applyAgoraAudioState()
+            if (controllerMode) {
+                sendAudioStateOverAgora()
+            }
             mainHandler.post {
-                agoraAudioStatus = "AUD: joined"
+                agoraAudioStatus = if (audioEnabled) "AUD: joined" else "AUD: off"
                 updateCommandStatus()
             }
         }
 
         override fun onUserJoined(uid: Int, elapsed: Int) {
-            rtcEngine?.adjustUserPlaybackSignalVolume(uid, 400)
+            rtcEngine?.adjustUserPlaybackSignalVolume(uid, if (audioEnabled) 260 else 0)
             if (controllerMode) mainHandler.post { setupRemoteVideo(uid) }
         }
 
@@ -803,6 +808,11 @@ class FirstFragment : Fragment() {
             val cmd = data?.decodeToString().orEmpty()
             if (cmd.isNotBlank()) {
                 mainHandler.post {
+                    if (cmd.startsWith(AGORA_AUDIO_CONTROL_PREFIX)) {
+                        val enabled = cmd.substringAfter(AGORA_AUDIO_CONTROL_PREFIX).trim() == "1"
+                        setAudioEnabled(enabled, notifyPeer = false)
+                        return@post
+                    }
                     commandRxStatus = "CMD RX: ${cmd.trim()}"
                     updateCommandStatus()
                     if (!controllerMode) {
@@ -855,11 +865,15 @@ class FirstFragment : Fragment() {
         binding.driveBackwardButton.visibility = View.VISIBLE
         binding.turnJoystick.visibility = View.GONE
         binding.rightControls.visibility = View.VISIBLE
+        binding.cameraUpButton.visibility = if (controllerMode) View.GONE else View.VISIBLE
+        binding.cameraDownButton.visibility = if (controllerMode) View.GONE else View.VISIBLE
         binding.debugToggle.visibility = View.GONE
         binding.closeApp.visibility = View.VISIBLE
         binding.servoControls.visibility = View.GONE
         binding.servoAngleValue.visibility = View.GONE
         binding.speedControls.visibility = if (localJoystickMode) View.VISIBLE else View.GONE
+        binding.volumeToggle.visibility = if (controllerMode) View.VISIBLE else View.GONE
+        updateVolumeToggleIcon()
         binding.root.post { applyMockupControlPositions() }
         updateDebugPanelVisibility()
     }
@@ -876,6 +890,7 @@ class FirstFragment : Fragment() {
         binding.debugToggle.visibility = View.GONE
         binding.commandStatus.visibility = View.GONE
         binding.closeApp.visibility = View.GONE
+        binding.volumeToggle.visibility = View.GONE
     }
 
     private fun startAgoraWhenReady() {
@@ -912,6 +927,11 @@ class FirstFragment : Fragment() {
         val rootHeight = binding.root.height
         if (rootWidth <= 0 || rootHeight <= 0) return
 
+        if (binding.modeOverlay.visibility == View.VISIBLE) {
+            applyStartScreenPositions(rootWidth, rootHeight)
+            return
+        }
+
         val scale = rootHeight / MOCKUP_HEIGHT
 
         placeAnchoredView(
@@ -927,10 +947,10 @@ class FirstFragment : Fragment() {
         )
         placeAnchoredView(
             binding.driveForwardButton,
-            x = 100f,
-            y = 297f,
-            width = 142f,
-            height = 123f,
+            x = 59f,
+            y = 983f,
+            width = 130f,
+            height = 119f,
             anchor = MockupAnchor.LEFT_BOTTOM,
             rootWidth = rootWidth,
             rootHeight = rootHeight,
@@ -938,10 +958,10 @@ class FirstFragment : Fragment() {
         )
         placeAnchoredView(
             binding.driveBackwardButton,
-            x = 101f,
-            y = 426f,
-            width = 138f,
-            height = 114f,
+            x = 58f,
+            y = 1109f,
+            width = 133f,
+            height = 118f,
             anchor = MockupAnchor.LEFT_BOTTOM,
             rootWidth = rootWidth,
             rootHeight = rootHeight,
@@ -971,10 +991,10 @@ class FirstFragment : Fragment() {
         )
         placeAnchoredView(
             binding.sideLeftButton,
-            x = 926f,
-            y = 384f,
-            width = 126f,
-            height = 133f,
+            x = 286f,
+            y = 1048f,
+            width = 112f,
+            height = 129f,
             anchor = MockupAnchor.RIGHT_BOTTOM,
             rootWidth = rootWidth,
             rootHeight = rootHeight,
@@ -982,10 +1002,10 @@ class FirstFragment : Fragment() {
         )
         placeAnchoredView(
             binding.sideRightButton,
-            x = 1061f,
-            y = 383f,
-            width = 113f,
-            height = 136f,
+            x = 408f,
+            y = 1048f,
+            width = 109f,
+            height = 130f,
             anchor = MockupAnchor.RIGHT_BOTTOM,
             rootWidth = rootWidth,
             rootHeight = rootHeight,
@@ -1004,53 +1024,74 @@ class FirstFragment : Fragment() {
         )
         placeAnchoredView(
             binding.closeApp,
-            x = 34f,
-            y = 20f,
-            width = 72f,
-            height = 72f,
-            anchor = MockupAnchor.LEFT_BOTTOM,
+            x = 488f,
+            y = 49f,
+            width = 41f,
+            height = 48f,
+            anchor = MockupAnchor.RIGHT_TOP,
             rootWidth = rootWidth,
             rootHeight = rootHeight,
             scale = scale
         )
         placeAnchoredView(
-            binding.modeCamera,
-            x = 29f,
-            y = 27f,
-            width = 161f,
-            height = 74f,
+            binding.volumeToggle,
+            x = 46f,
+            y = 41f,
+            width = 59f,
+            height = 59f,
             anchor = MockupAnchor.LEFT_TOP,
-            rootWidth = rootWidth,
-            rootHeight = rootHeight,
-            scale = scale
-        )
-        placeAnchoredView(
-            binding.modeJoystick,
-            x = 193f,
-            y = 28f,
-            width = 181f,
-            height = 72f,
-            anchor = MockupAnchor.LEFT_TOP,
-            rootWidth = rootWidth,
-            rootHeight = rootHeight,
-            scale = scale
-        )
-        placeAnchoredView(
-            binding.startScreenLogo,
-            x = 507f,
-            y = 195f,
-            width = 270f,
-            height = 186f,
-            anchor = MockupAnchor.CENTER,
             rootWidth = rootWidth,
             rootHeight = rootHeight,
             scale = scale
         )
     }
 
+    private fun applyStartScreenPositions(rootWidth: Int, rootHeight: Int) {
+        val scale = rootHeight / START_MOCKUP_HEIGHT
+        val contentLeft = (rootWidth - START_MOCKUP_WIDTH * scale) / 2f
+
+        placeStartView(
+            binding.modeCamera,
+            x = 35f,
+            y = 37f,
+            width = 157f,
+            height = 71f,
+            anchor = MockupAnchor.LEFT_TOP,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale,
+            contentLeft = contentLeft
+        )
+        placeStartView(
+            binding.modeJoystick,
+            x = 196f,
+            y = 37f,
+            width = 180f,
+            height = 75f,
+            anchor = MockupAnchor.LEFT_TOP,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale,
+            contentLeft = contentLeft
+        )
+        placeStartView(
+            binding.startScreenLogo,
+            x = 150f,
+            y = 548f,
+            width = 272f,
+            height = 188f,
+            anchor = MockupAnchor.CENTER,
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            scale = scale,
+            contentLeft = contentLeft
+        )
+    }
+
     private enum class MockupAnchor {
         LEFT_TOP,
         LEFT_BOTTOM,
+        RIGHT_TOP,
         RIGHT_BOTTOM,
         CENTER_TOP,
         CENTER
@@ -1088,6 +1129,11 @@ class FirstFragment : Fragment() {
                 top = rootHeight - (MOCKUP_HEIGHT - y) * scale
             }
 
+            MockupAnchor.RIGHT_TOP -> {
+                left = rootWidth - (MOCKUP_WIDTH - x) * scale
+                top = y * scale
+            }
+
             MockupAnchor.CENTER_TOP -> {
                 val centerOffset = (x + width / 2f - MOCKUP_WIDTH / 2f) * scale
                 left = rootWidth / 2f + centerOffset - scaledWidth / 2f
@@ -1099,6 +1145,45 @@ class FirstFragment : Fragment() {
                 val centerOffsetY = (y + height / 2f - MOCKUP_HEIGHT / 2f) * scale
                 left = rootWidth / 2f + centerOffsetX - scaledWidth / 2f
                 top = rootHeight / 2f + centerOffsetY - scaledHeight / 2f
+            }
+        }
+
+        placeView(view, left, top, scaledWidth, scaledHeight)
+    }
+
+    private fun placeStartView(
+        view: View,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        anchor: MockupAnchor,
+        rootWidth: Int,
+        rootHeight: Int,
+        scale: Float,
+        contentLeft: Float
+    ) {
+        val scaledWidth = width * scale
+        val scaledHeight = height * scale
+        val left: Float
+        val top: Float
+
+        when (anchor) {
+            MockupAnchor.LEFT_TOP -> {
+                left = contentLeft + x * scale
+                top = y * scale
+            }
+
+            MockupAnchor.CENTER -> {
+                val centerOffsetX = (x + width / 2f - START_MOCKUP_WIDTH / 2f) * scale
+                val centerOffsetY = (y + height / 2f - START_MOCKUP_HEIGHT / 2f) * scale
+                left = rootWidth / 2f + centerOffsetX - scaledWidth / 2f
+                top = rootHeight / 2f + centerOffsetY - scaledHeight / 2f
+            }
+
+            else -> {
+                left = contentLeft + x * scale
+                top = y * scale
             }
         }
 
@@ -1138,21 +1223,61 @@ class FirstFragment : Fragment() {
         view.layoutParams = params
     }
 
+    private fun updateVolumeToggleIcon() {
+        if (_binding == null) return
+        binding.volumeToggleIcon.setImageResource(
+            if (audioEnabled) R.drawable.volume_on else R.drawable.volume_off
+        )
+        binding.volumeToggle.alpha = 1f
+    }
+
+    private fun setAudioEnabled(enabled: Boolean, notifyPeer: Boolean) {
+        audioEnabled = enabled
+        updateVolumeToggleIcon()
+        applyAgoraAudioState()
+        agoraAudioStatus = if (enabled) "AUD: on" else "AUD: off"
+        updateCommandStatus()
+        if (notifyPeer) {
+            sendAudioStateOverAgora()
+        }
+    }
+
+    private fun applyAgoraAudioState() {
+        val engine = rtcEngine ?: return
+        engine.enableLocalAudio(audioEnabled)
+        engine.muteLocalAudioStream(!audioEnabled)
+        engine.muteAllRemoteAudioStreams(!audioEnabled)
+        if (audioEnabled) {
+            engine.setDefaultAudioRoutetoSpeakerphone(true)
+            engine.setEnableSpeakerphone(true)
+            engine.adjustRecordingSignalVolume(260)
+            engine.adjustPlaybackSignalVolume(260)
+        }
+    }
+
+    private fun sendAudioStateOverAgora() {
+        val id = commandStreamId ?: return
+        val value = if (audioEnabled) "1" else "0"
+        rtcEngine?.sendStreamMessage(id, "$AGORA_AUDIO_CONTROL_PREFIX$value".toByteArray())
+    }
+
     private fun initAgora() {
         try {
             rtcEngine = RtcEngine.create(requireContext(), AGORA_APP_ID, rtcEventHandler).apply {
                 enableAudio()
                 enableVideo()
                 setAudioProfile(Constants.AUDIO_PROFILE_MUSIC_STANDARD, Constants.AUDIO_SCENARIO_GAME_STREAMING)
+                setParameters("{\"che.audio.aec.enable\":true,\"che.audio.ans.enable\":true,\"che.audio.agc.enable\":true}")
                 setDefaultAudioRoutetoSpeakerphone(true)
                 setEnableSpeakerphone(true)
                 enableLocalAudio(true)
                 muteLocalAudioStream(false)
-                adjustRecordingSignalVolume(400)
-                adjustPlaybackSignalVolume(400)
+                adjustRecordingSignalVolume(260)
+                adjustPlaybackSignalVolume(260)
                 setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING)
                 setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
             }
+            applyAgoraAudioState()
             if (!controllerMode) {
                 val surface = SurfaceView(requireContext())
                 binding.agoraVideoContainer.addView(surface)

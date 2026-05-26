@@ -1316,13 +1316,24 @@ class FirstFragment : Fragment() {
         updateCommandStatus()
         thread {
             try {
-                serialConnection = BluetoothRobotConnection.openFirstPaired(requireContext()) { line ->
-                    mainHandler.post {
-                        if (closingApp || _binding == null) return@post
-                        arduinoRxStatus = line
-                        updateCommandStatus()
+                serialConnection = BluetoothRobotConnection.openFirstPaired(
+                    context = requireContext(),
+                    onLineReceived = { line ->
+                        mainHandler.post {
+                            if (closingApp || _binding == null) return@post
+                            arduinoRxStatus = line
+                            updateCommandStatus()
+                        }
+                    },
+                    onDisconnected = {
+                        mainHandler.post {
+                            if (closingApp || _binding == null) return@post
+                            connectionStatus = "BT: disconnected"
+                            updateCommandStatus()
+                            closeAppSafely()
+                        }
                     }
-                }
+                )
                 mainHandler.post {
                     if (closingApp || _binding == null) return@post
                     connectionStatus = "BT: OK"

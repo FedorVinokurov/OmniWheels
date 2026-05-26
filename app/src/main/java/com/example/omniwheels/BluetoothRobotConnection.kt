@@ -34,11 +34,13 @@ class BluetoothRobotConnection private constructor(
     private val gatt: BluetoothGatt,
     private val writeCharacteristics: List<BluetoothGattCharacteristic>,
     private val onLineReceived: (String) -> Unit,
+    private val onDisconnected: () -> Unit,
 ) : UsbSerialConnection {
     private val writeLock = Object()
     private val readBuffer = StringBuilder()
     @Volatile private var pendingWriteLatch: CountDownLatch? = null
     @Volatile private var pendingWriteError: IOException? = null
+    @Volatile private var disconnectedNotified = false
 
     override fun write(bytes: ByteArray) {
         synchronized(writeLock) {
@@ -105,6 +107,14 @@ class BluetoothRobotConnection private constructor(
         }
     }
 
+    fun onGattDisconnected() {
+        if (disconnectedNotified) return
+        disconnectedNotified = true
+        pendingWriteError = IOException("Bluetooth disconnected")
+        pendingWriteLatch?.countDown()
+        onDisconnected()
+    }
+
     @SuppressLint("MissingPermission")
     private fun startWrite(
         characteristic: BluetoothGattCharacteristic,
@@ -142,6 +152,7 @@ class BluetoothRobotConnection private constructor(
         fun openFirstPaired(
             context: Context,
             onLineReceived: (String) -> Unit = {},
+            onDisconnected: () -> Unit = {},
         ): BluetoothRobotConnection {
             val adapter = bluetoothAdapter(context)
                 ?: throw IOException("Bluetooth not supported")
@@ -150,7 +161,7 @@ class BluetoothRobotConnection private constructor(
             }
             if (BluetoothAdapter.checkBluetoothAddress(ROBOT_BLUETOOTH_ADDRESS)) {
                 val device = adapter.getRemoteDevice(ROBOT_BLUETOOTH_ADDRESS)
-                return open(context, device, onLineReceived)
+                return open(context, device, onLineReceived, onDisconnected)
             }
             val device = adapter.bondedDevices
                 .sortedWith(
@@ -159,7 +170,7 @@ class BluetoothRobotConnection private constructor(
                 )
                 .firstOrNull()
                 ?: throw IOException("No paired Bluetooth devices")
-            return open(context, device, onLineReceived)
+            return open(context, device, onLineReceived, onDisconnected)
         }
 
         @SuppressLint("MissingPermission")
@@ -167,6 +178,7 @@ class BluetoothRobotConnection private constructor(
             context: Context,
             device: BluetoothDevice,
             onLineReceived: (String) -> Unit,
+            onDisconnected: () -> Unit,
         ): BluetoothRobotConnection {
             val latch = CountDownLatch(1)
             var result: Result<BluetoothRobotConnection>? = null
@@ -183,8 +195,11 @@ class BluetoothRobotConnection private constructor(
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
                         gatt.discoverServices()
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        result = Result.failure(IOException("Bluetooth disconnected"))
-                        latch.countDown()
+                        connection?.onGattDisconnected()
+                        if (connection == null) {
+                            result = Result.failure(IOException("Bluetooth disconnected"))
+                            latch.countDown()
+                        }
                         gatt.close()
                     }
                 }
@@ -213,7 +228,7 @@ class BluetoothRobotConnection private constructor(
                         gatt.close()
                         return
                     }
-                    val opened = BluetoothRobotConnection(gatt, writeCharacteristics, onLineReceived)
+                    val opened = BluetoothRobotConnection(gatt, writeCharacteristics, onLineReceived, onDisconnected)
                     connection = opened
                     enableNotifications(gatt, service.characteristics.filter { it.canNotify() || it.canIndicate() })
                     result = Result.success(opened)

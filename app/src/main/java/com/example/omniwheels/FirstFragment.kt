@@ -8,6 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
@@ -42,6 +46,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 // Настройки подключения
@@ -68,6 +73,11 @@ private const val MOTOR_DIRECTION_DEAD_ZONE = 0.25f
 private const val FULL_PWM = 255
 private const val DEFAULT_TURN_BUTTON_SPEED = 223
 private const val DEFAULT_TURN_BUTTON_DURATION_MS = 100
+private const val DEFAULT_AUTO_TURN_ANGLE_DEGREES = 30f
+private const val AUTO_TURN_INTERVAL_MS = 50L
+private const val AUTO_TURN_STOP_TOLERANCE_DEGREES = 3f
+private const val AUTO_TURN_SLOWDOWN_RANGE_DEGREES = 35f
+private const val AUTO_TURN_MIN_SPEED = 70
 private const val MAX_TURN_BUTTON_DURATION_MS = 3000
 private const val MOCKUP_WIDTH = 576f
 private const val MOCKUP_HEIGHT = 1280f
@@ -77,6 +87,7 @@ private const val START_MOCKUP_HEIGHT = 1280f
 private const val AGORA_CHANNEL = "robot-room"
 private const val AGORA_APP_ID = "41f7f4e1a4bd4cda9efe3fc3696e86ae"
 private const val AGORA_AUDIO_CONTROL_PREFIX = "__OMNI_AUDIO__:"
+private const val AGORA_AUTO_TURN_PREFIX = "__OMNI_AUTO_TURN__:"
 private const val LOG_TAG = "OmniAgora"
 
 data class PendingCommand(val line: String, val outgoing: String, val sequence: Long)
@@ -123,6 +134,13 @@ class FirstFragment : Fragment() {
     private var driveTurnSlowdownPercent = 50
     private var driveTurnDirection = 0
     private var turnButtonRunnable: Runnable? = null
+    private var autoTurnRunning = false
+    private var autoTurnTargetDegrees = 0f
+    private var autoTurnDirection = 0
+    private var autoTurnLastAbsError = Float.MAX_VALUE
+    private var compassAzimuthDegrees: Float? = null
+    private var accelerometerValues: FloatArray? = null
+    private var magneticValues: FloatArray? = null
 
     private var connectionStatus = "BT: нет"
     private var commandTxStatus = "TX: нет"
@@ -139,6 +157,53 @@ class FirstFragment : Fragment() {
     private val commandWriteSequence = AtomicLong(0)
     private val pendingCommandWrite = AtomicReference<PendingCommand?>(null)
     private val commandWriterActive = AtomicBoolean(false)
+    private val sensorManager: SensorManager by lazy {
+        requireContext().getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    }
+    private val compassListener = object : SensorEventListener {
+        private val rotationMatrix = FloatArray(9)
+        private val orientation = FloatArray(3)
+
+        override fun onSensorChanged(event: SensorEvent) {
+            when (event.sensor.type) {
+                Sensor.TYPE_ROTATION_VECTOR -> {
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                    updateCompassFromRotationMatrix(rotationMatrix)
+                }
+
+                Sensor.TYPE_ACCELEROMETER -> {
+                    accelerometerValues = event.values.clone()
+                    updateCompassFromAccelMag()
+                }
+
+                Sensor.TYPE_MAGNETIC_FIELD -> {
+                    magneticValues = event.values.clone()
+                    updateCompassFromAccelMag()
+                }
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+        private fun updateCompassFromAccelMag() {
+            val gravity = accelerometerValues ?: return
+            val magnetic = magneticValues ?: return
+            if (SensorManager.getRotationMatrix(rotationMatrix, null, gravity, magnetic)) {
+                updateCompassFromRotationMatrix(rotationMatrix)
+            }
+        }
+
+        private fun updateCompassFromRotationMatrix(matrix: FloatArray) {
+            SensorManager.getOrientation(matrix, orientation)
+            val degrees = Math.toDegrees(orientation[0].toDouble()).toFloat()
+            compassAzimuthDegrees = normalizeDegrees(degrees)
+        }
+    }
+    private val autoTurnRunnable = object : Runnable {
+        override fun run() {
+            updateAutoTurn()
+        }
+    }
     private val mediaPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
             val granted = mediaPermissions().all { permission ->
@@ -302,7 +367,7 @@ class FirstFragment : Fragment() {
                     if (driveActive) {
                         sendDriveCommand()
                     } else {
-                        sendTurnCommand(direction * turnButtonSpeed, turnButtonDurationMs.toLong())
+                        startCompassTurn(direction)
                     }
                     true
                 }
@@ -313,7 +378,9 @@ class FirstFragment : Fragment() {
                     pressedView.alpha = 1f
                     if (driveTurnDirection == direction) {
                         driveTurnDirection = 0
-                        sendDriveCommand()
+                        if (!autoTurnRunning) {
+                            sendDriveCommand()
+                        }
                     }
                     true
                 }
@@ -495,6 +562,7 @@ class FirstFragment : Fragment() {
         joyY = 0f
         rotation = 0f
         driveTurnDirection = 0
+        stopAutoTurn(sendStop = false)
         turnButtonRunnable?.let { mainHandler.removeCallbacks(it) }
         turnButtonRunnable = null
         lastReleaseAt = SystemClock.uptimeMillis()
@@ -526,6 +594,91 @@ class FirstFragment : Fragment() {
         } else {
             writeCommand("STOP\n", force = true)
         }
+    }
+
+    private fun startCompassTurn(direction: Int) {
+        val normalizedDirection = if (direction >= 0) 1 else -1
+        if (controllerMode) {
+            sendCommandOverAgora("$AGORA_AUTO_TURN_PREFIX$normalizedDirection")
+            return
+        }
+
+        val currentAzimuth = compassAzimuthDegrees
+        if (currentAzimuth == null) {
+            sendTurnCommand(normalizedDirection * turnButtonSpeed, turnButtonDurationMs.toLong())
+            return
+        }
+
+        turnButtonRunnable?.let { mainHandler.removeCallbacks(it) }
+        mainHandler.removeCallbacks(autoTurnRunnable)
+        mainHandler.removeCallbacks(motorSendRunnable)
+        motorSendScheduled = false
+        autoTurnRunning = true
+        autoTurnDirection = normalizedDirection
+        autoTurnTargetDegrees = normalizeDegrees(
+            currentAzimuth + normalizedDirection * DEFAULT_AUTO_TURN_ANGLE_DEGREES
+        )
+        autoTurnLastAbsError = abs(signedAngleDelta(currentAzimuth, autoTurnTargetDegrees))
+        commandTxStatus = "AUTO TURN: ${DEFAULT_AUTO_TURN_ANGLE_DEGREES.roundToInt()} deg"
+        updateCommandStatus()
+        updateAutoTurn()
+    }
+
+    private fun updateAutoTurn() {
+        if (!autoTurnRunning) return
+        val currentAzimuth = compassAzimuthDegrees
+        if (currentAzimuth == null) {
+            stopAutoTurn(sendStop = true)
+            return
+        }
+
+        val error = signedAngleDelta(currentAzimuth, autoTurnTargetDegrees)
+        val absError = abs(error)
+        val crossedTarget = autoTurnDirection != 0 && error * autoTurnDirection < 0f
+        val movingAwayFromTarget = absError > autoTurnLastAbsError + AUTO_TURN_STOP_TOLERANCE_DEGREES
+        if (absError <= AUTO_TURN_STOP_TOLERANCE_DEGREES || crossedTarget || movingAwayFromTarget) {
+            stopAutoTurn(sendStop = true)
+            return
+        }
+        autoTurnLastAbsError = absError
+
+        val scale = (absError / AUTO_TURN_SLOWDOWN_RANGE_DEGREES).coerceIn(0.2f, 1f)
+        val speed = max(AUTO_TURN_MIN_SPEED, (turnButtonSpeed * scale).roundToInt())
+            .coerceIn(0, FULL_PWM)
+        val signedSpeed = speed * autoTurnDirection.coerceIn(-1, 1)
+        val speeds = mixedMotorSpeeds(forward = 0, rotate = signedSpeed, strafe = 0)
+        desiredMotorSpeeds = speeds
+        updateDesiredMotorDebug()
+        sendMotorCommand(speeds, force = true)
+
+        joystickDebugStatus = "CMP: ${currentAzimuth.roundToInt()} -> ${autoTurnTargetDegrees.roundToInt()} e=${error.roundToInt()}"
+        updateCommandStatus()
+        mainHandler.postDelayed(autoTurnRunnable, AUTO_TURN_INTERVAL_MS)
+    }
+
+    private fun stopAutoTurn(sendStop: Boolean) {
+        if (!autoTurnRunning) return
+        autoTurnRunning = false
+        autoTurnDirection = 0
+        autoTurnLastAbsError = Float.MAX_VALUE
+        mainHandler.removeCallbacks(autoTurnRunnable)
+        turnButtonRunnable = null
+        desiredMotorSpeeds = intArrayOf(0, 0, 0, 0)
+        updateDesiredMotorDebug()
+        lastMotorCommand = ""
+        if (sendStop) sendStopCommand()
+    }
+
+    private fun normalizeDegrees(value: Float): Float {
+        var result = value % 360f
+        if (result < 0f) result += 360f
+        return result
+    }
+
+    private fun signedAngleDelta(from: Float, to: Float): Float {
+        var delta = (to - from + 540f) % 360f - 180f
+        if (delta == -180f) delta = 180f
+        return delta
     }
 
     private fun sendTurnCommand(speed: Int, durationMs: Long) {
@@ -811,6 +964,11 @@ class FirstFragment : Fragment() {
                     if (cmd.startsWith(AGORA_AUDIO_CONTROL_PREFIX)) {
                         val enabled = cmd.substringAfter(AGORA_AUDIO_CONTROL_PREFIX).trim() == "1"
                         setAudioEnabled(enabled, notifyPeer = false)
+                        return@post
+                    }
+                    if (cmd.startsWith(AGORA_AUTO_TURN_PREFIX)) {
+                        val direction = cmd.substringAfter(AGORA_AUTO_TURN_PREFIX).trim().toIntOrNull()
+                        if (direction != null) startCompassTurn(direction)
                         return@post
                     }
                     commandRxStatus = "CMD RX: ${cmd.trim()}"
@@ -1370,13 +1528,39 @@ class FirstFragment : Fragment() {
         }
     }
 
+    private fun startCompassSensors() {
+        val rotationVector = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        if (rotationVector != null) {
+            sensorManager.registerListener(compassListener, rotationVector, SensorManager.SENSOR_DELAY_GAME)
+            return
+        }
+
+        val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val magnetic = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        if (accelerometer != null && magnetic != null) {
+            sensorManager.registerListener(compassListener, accelerometer, SensorManager.SENSOR_DELAY_GAME)
+            sensorManager.registerListener(compassListener, magnetic, SensorManager.SENSOR_DELAY_GAME)
+        }
+    }
+
+    private fun stopCompassSensors() {
+        sensorManager.unregisterListener(compassListener)
+    }
+
     override fun onResume() {
         super.onResume()
         if (closingApp || _binding == null) return
+        startCompassSensors()
         if (pendingBluetoothConnect) {
             pendingBluetoothConnect = false
             connectBluetooth()
         }
+    }
+
+    override fun onPause() {
+        stopAutoTurn(sendStop = true)
+        stopCompassSensors()
+        super.onPause()
     }
 
     private fun closeAppSafely() {
